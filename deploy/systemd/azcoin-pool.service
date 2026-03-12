@@ -1,0 +1,15 @@
+[Unit]
+Description=AZCOIN Mining Pool
+After=network.target
+
+[Service]
+Type=simple
+User=azcoin-pool
+Group=azcoin-pool
+ExecStart=/usr/local/bin/azcoin-pool
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=-/etc/azcoin-pool/env
+
+[Install]
+WantedBy=multi-user.target

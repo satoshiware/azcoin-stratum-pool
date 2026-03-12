@@ -1,0 +1,21 @@
+# AZCOIN Pool Configuration
+# Copy to config.toml and adjust as needed
+
+[pool]
+name = "azcoin-pool"
+
+[api]
+bind = "0.0.0.0"
+port = 8080
+
+[stratum]
+bind = "0.0.0.0"
+port = 3333
+
+[daemon]
+url = "http://127.0.0.1:8332"
+# job_source_mode: "rpc" (getblocktemplate) or "api" (GET /v1/az/mining/template/current)
+job_source_mode = "rpc"
+# Optional: RPC auth (leave empty if daemon has no auth)
+# rpc_user = ""
+# rpc_password = ""

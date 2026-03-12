@@ -1,0 +1,17 @@
+# Operational API only. /health, /ready, /v1/pool/stats, /v1/pool/workers.
+# Returns stub or in-memory data where needed. Lightweight production HTTP framework.
+
+[package]
+name = "api_server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+common = { path = "../common" }
+hex = "0.4"
+pool_core = { path = "../pool_core" }
+axum = { version = "0.7", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"

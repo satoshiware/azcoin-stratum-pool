@@ -1,0 +1,16 @@
+# AZCOIN pool - docker-compose for local dev
+# Requires AZCOIN node for full operation
+
+services:
+  azcoin-pool:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "8080:8080"   # API
+      - "3333:3333"   # Stratum
+    env_file:
+      - ../../.env
+    volumes:
+      - ../../config.toml:/app/config.toml:ro
+    restart: unless-stopped

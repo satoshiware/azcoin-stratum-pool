@@ -1,0 +1,30 @@
+# Main binary. Wires together protocol_sv1, pool_core, coin_azcoin, storage, api_server.
+# Bootstrap entry point for the AZCOIN mining pool.
+
+[package]
+name = "azcoin-pool"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "azcoin-pool"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1"
+common = { path = "../common" }
+protocol_sv1 = { path = "../protocol_sv1" }
+pool_core = { path = "../pool_core" }
+coin_azcoin = { path = "../coin_azcoin" }
+storage = { path = "../storage" }
+api_server = { path = "../api_server" }
+axum = "0.7"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tower = "0.4"
+
+[dev-dependencies]
+http-body-util = "0.1"
+serde_json = "1"
+tower = { version = "0.4", features = ["util"] }

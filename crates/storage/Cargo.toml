@@ -1,0 +1,20 @@
+# Persistence layer. Database models, repositories, migrations. PostgreSQL-oriented.
+# Interfaces for workers, shares, rounds, balances, payouts. Implementations minimal for now.
+
+[package]
+name = "storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+common = { path = "../common" }
+pool_core = { path = "../pool_core" }
+async-trait = "0.1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"], optional = true }
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+
+[features]
+default = []
+database = ["sqlx"]

@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/common",
+    "crates/protocol_sv1",
+    "crates/pool_core",
+    "crates/coin_azcoin",
+    "crates/storage",
+    "crates/api_server",
+    "crates/azcoin-pool",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["satoshiware"]
+license = "MIT"
+repository = "https://github.com/satoshiware/azcoin-stratum-pool"

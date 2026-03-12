@@ -1,0 +1,18 @@
+# Stratum V1 wire protocol only. Listener/session, message types, parsing/serialization,
+# mapping SV1 requests into internal domain commands. Does NOT own balances, payouts, or rounds.
+# TODO: SV2 adapter will be added via protocol adapter layer—this crate stays SV1-focused.
+
+[package]
+name = "protocol_sv1"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+common = { path = "../common" }
+pool_core = { path = "../pool_core" }
+async-trait = "0.1"
+tokio = { version = "1", features = ["net", "io-util", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+tracing = "0.1"

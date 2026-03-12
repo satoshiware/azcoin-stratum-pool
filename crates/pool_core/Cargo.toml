@@ -1,0 +1,15 @@
+# Protocol-agnostic mining pool domain logic. Worker/session, job, share, round, stats abstractions.
+# Defines domain models and traits—business logic implementations live in other crates.
+# This crate has no dependency on Stratum V1 or V2; protocol adapters depend on it.
+
+[package]
+name = "pool_core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+common = { path = "../common" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"
