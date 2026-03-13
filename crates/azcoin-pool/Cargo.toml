@@ -6,6 +6,10 @@ name = "azcoin-pool"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "azcoin_pool"
+path = "src/lib.rs"
+
 [[bin]]
 name = "azcoin-pool"
 path = "src/main.rs"

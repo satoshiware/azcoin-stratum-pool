@@ -4,43 +4,193 @@
 use crate::messages::{Sv1DomainCommand, Sv1Request};
 use tracing::warn;
 
-/// Parse SV1 request into domain command. Returns None if unknown method.
-pub fn map_request_to_command(req: &Sv1Request) -> Option<Sv1DomainCommand> {
+/// Parse result: Ok(Some(cmd)), Ok(None) for unknown method, Err(msg) for parse error.
+pub fn map_request_to_command(req: &Sv1Request) -> Result<Option<Sv1DomainCommand>, String> {
     match req.method.as_str() {
-        "mining.subscribe" => Some(Sv1DomainCommand::Subscribe),
+        "mining.subscribe" => Ok(Some(Sv1DomainCommand::Subscribe)),
         "mining.authorize" => {
-            let params = req.params.as_ref()?.as_array()?;
-            let username = params.first()?.as_str()?.to_string();
+            let params = req
+                .params
+                .as_ref()
+                .and_then(|p| p.as_array())
+                .ok_or("mining.authorize requires params array")?;
+            let username = params
+                .first()
+                .and_then(|v| v.as_str())
+                .ok_or("mining.authorize requires username")?
+                .to_string();
             let password = params
                 .get(1)
                 .and_then(|p| p.as_str())
                 .unwrap_or("")
                 .to_string();
-            Some(Sv1DomainCommand::Authorize { username, password })
+            Ok(Some(Sv1DomainCommand::Authorize { username, password }))
         }
-        "mining.submit" => {
-            let params = req.params.as_ref()?.as_array()?;
-            let username = params.first()?.as_str()?.to_string();
-            let job_id = params.get(1)?.as_str()?.to_string();
-            let extra_nonce2_hex = params.get(2)?.as_str()?;
-            let ntime_hex = params.get(3)?.as_str()?;
-            let nonce_hex = params.get(4)?.as_str()?;
+        "mining.submit" => map_submit_params(req).map(Some),
+        _ => {
+            warn!(method = %req.method, "unknown SV1 method");
+            Ok(None)
+        }
+    }
+}
 
-            let extra_nonce2 = hex::decode(extra_nonce2_hex).ok()?;
-            let ntime = u32::from_str_radix(ntime_hex, 16).ok()?;
-            let nonce = u32::from_str_radix(nonce_hex, 16).ok()?;
+/// Parse mining.submit params into SubmitShare. Returns Err with explicit reason on failure.
+fn map_submit_params(req: &Sv1Request) -> Result<Sv1DomainCommand, String> {
+    let params = req
+        .params
+        .as_ref()
+        .and_then(|p| p.as_array())
+        .ok_or("mining.submit requires params array")?;
 
-            Some(Sv1DomainCommand::SubmitShare {
+    if params.len() < 5 {
+        return Err(format!(
+            "mining.submit requires 5 params, got {}",
+            params.len()
+        ));
+    }
+
+    let username = params
+        .first()
+        .and_then(|v| v.as_str())
+        .ok_or("mining.submit param 0 (username) must be string")?
+        .to_string();
+    let job_id = params
+        .get(1)
+        .and_then(|v| v.as_str())
+        .ok_or("mining.submit param 1 (job_id) must be string")?
+        .to_string();
+    let extra_nonce2_hex = params
+        .get(2)
+        .and_then(|v| v.as_str())
+        .ok_or("mining.submit param 2 (extra_nonce2) must be hex string")?;
+    let ntime_hex = params
+        .get(3)
+        .and_then(|v| v.as_str())
+        .ok_or("mining.submit param 3 (ntime) must be hex string")?;
+    let nonce_hex = params
+        .get(4)
+        .and_then(|v| v.as_str())
+        .ok_or("mining.submit param 4 (nonce) must be hex string")?;
+
+    let extra_nonce2 = hex::decode(extra_nonce2_hex)
+        .map_err(|_| "mining.submit param 2 (extra_nonce2) invalid hex")?;
+    if ntime_hex.len() != 8 {
+        return Err("mining.submit param 3 (ntime) must be 8 hex chars".to_string());
+    }
+    let ntime = u32::from_str_radix(ntime_hex, 16)
+        .map_err(|_| "mining.submit param 3 (ntime) invalid hex")?;
+    if nonce_hex.len() != 8 {
+        return Err("mining.submit param 4 (nonce) must be 8 hex chars".to_string());
+    }
+    let nonce = u32::from_str_radix(nonce_hex, 16)
+        .map_err(|_| "mining.submit param 4 (nonce) invalid hex")?;
+
+    Ok(Sv1DomainCommand::SubmitShare {
+        username,
+        job_id,
+        extra_nonce2,
+        ntime,
+        nonce,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_submit_valid_params() {
+        let req = Sv1Request {
+            id: Some(serde_json::json!(1)),
+            method: "mining.submit".to_string(),
+            params: Some(serde_json::json!([
+                "user.worker1",
+                "job-123",
+                "00000000",
+                "69b33a70",
+                "12345678"
+            ])),
+        };
+        let cmd = map_request_to_command(&req).unwrap().unwrap();
+        match cmd {
+            Sv1DomainCommand::SubmitShare {
                 username,
                 job_id,
                 extra_nonce2,
                 ntime,
                 nonce,
-            })
+            } => {
+                assert_eq!(username, "user.worker1");
+                assert_eq!(job_id, "job-123");
+                assert_eq!(extra_nonce2, vec![0u8; 4]);
+                assert_eq!(ntime, 0x69b33a70);
+                assert_eq!(nonce, 0x12345678);
+            }
+            _ => panic!("expected SubmitShare"),
         }
-        _ => {
-            warn!(method = %req.method, "unknown SV1 method");
-            None
-        }
+    }
+
+    #[test]
+    fn test_submit_malformed_ntime_rejected() {
+        let req = Sv1Request {
+            id: None,
+            method: "mining.submit".to_string(),
+            params: Some(serde_json::json!([
+                "user.worker1",
+                "job-123",
+                "00000000",
+                "zz",
+                "12345678"
+            ])),
+        };
+        let err = map_request_to_command(&req).unwrap_err();
+        assert!(err.contains("ntime"));
+    }
+
+    #[test]
+    fn test_submit_too_few_params_rejected() {
+        let req = Sv1Request {
+            id: None,
+            method: "mining.submit".to_string(),
+            params: Some(serde_json::json!(["user.worker1", "job-123"])),
+        };
+        let err = map_request_to_command(&req).unwrap_err();
+        assert!(err.contains("5 params"));
+    }
+
+    #[test]
+    fn test_submit_ntime_wrong_length_rejected() {
+        let req = Sv1Request {
+            id: None,
+            method: "mining.submit".to_string(),
+            params: Some(serde_json::json!([
+                "user.worker1",
+                "job-123",
+                "00000000",
+                "123",
+                "12345678"
+            ])),
+        };
+        let err = map_request_to_command(&req).unwrap_err();
+        assert!(err.contains("ntime"));
+        assert!(err.contains("8 hex chars"));
+    }
+
+    #[test]
+    fn test_submit_nonce_wrong_length_rejected() {
+        let req = Sv1Request {
+            id: None,
+            method: "mining.submit".to_string(),
+            params: Some(serde_json::json!([
+                "user.worker1",
+                "job-123",
+                "00000000",
+                "69b33a70",
+                "123"
+            ])),
+        };
+        let err = map_request_to_command(&req).unwrap_err();
+        assert!(err.contains("nonce"));
+        assert!(err.contains("8 hex chars"));
     }
 }

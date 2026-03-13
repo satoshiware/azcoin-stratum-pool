@@ -2,44 +2,44 @@
 
 use common::PoolError;
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{info, warn};
 
 /// Node API client. Fetches template via REST GET.
 pub struct NodeApiClient {
     base_url: String,
+    bearer_token: Option<String>,
     client: reqwest::Client,
 }
 
 /// Response from GET /v1/az/mining/template/current.
-/// TODO: AZCOIN-specific fields may need refinement.
+/// Matches the AZCOIN node API contract exactly.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct NodeApiTemplate {
+    pub job_id: String,
+    pub prev_hash: String,
     pub version: u32,
-    #[serde(alias = "previousblockhash")]
-    pub previous_block_hash: String,
-    pub bits: String,
-    /// Unix timestamp. Normalized to u32 for pool_core::Job.
-    pub curtime: u64,
+    pub nbits: String,
+    /// Block time as hex string (e.g. "69b33a70"). Parsed to u32 for pool_core::Job.
+    pub ntime: String,
+    pub clean_jobs: bool,
     pub height: u64,
-    #[serde(default)]
-    pub transactions: Vec<NodeApiTxEntry>,
-    #[serde(default)]
-    pub coinbase_value: u64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NodeApiTxEntry {
-    pub data: Option<String>,
-    pub txid: Option<String>,
-    pub hash: Option<String>,
 }
 
 impl NodeApiClient {
-    pub fn new(base_url: impl Into<String>) -> Self {
+    /// Create client. Pass non-empty token for Bearer auth.
+    pub fn new(base_url: impl Into<String>, bearer_token: Option<String>) -> Self {
         let base_url = base_url.into().trim_end_matches('/').to_string();
+        let bearer_token = bearer_token.and_then(|t| {
+            let t = t.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        });
         Self {
             base_url,
+            bearer_token,
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
@@ -47,22 +47,42 @@ impl NodeApiClient {
         }
     }
 
+    /// Whether Bearer auth is configured.
+    pub fn auth_configured(&self) -> bool {
+        self.bearer_token.is_some()
+    }
+
     /// Fetch current block template from node API.
     pub async fn get_template_current(&self) -> Result<Option<NodeApiTemplate>, PoolError> {
         let url = format!("{}/v1/az/mining/template/current", self.base_url);
-        debug!(url = %url, "node API get template");
+        let auth_configured = self.auth_configured();
+        info!(
+            url = %url,
+            auth_configured = auth_configured,
+            "node API get template"
+        );
 
-        let resp = self
-            .client
-            .get(&url)
+        let mut req = self.client.get(&url);
+        if let Some(ref token) = self.bearer_token {
+            req = req.bearer_auth(token);
+        }
+
+        let resp = req
             .send()
             .await
             .map_err(|e| PoolError::Daemon(format!("node API request failed: {}", e)))?;
 
-        if !resp.status().is_success() {
+        let status = resp.status();
+        if !status.is_success() {
+            warn!(
+                url = %url,
+                auth_configured = auth_configured,
+                status = %status,
+                "node API returned non-2xx"
+            );
             return Err(PoolError::Daemon(format!(
                 "node API returned HTTP {}",
-                resp.status()
+                status
             )));
         }
 
@@ -71,6 +91,86 @@ impl NodeApiClient {
             .await
             .map_err(|e| PoolError::Daemon(format!("node API response parse failed: {}", e)))?;
 
+        info!(
+            job_id = %template.job_id,
+            height = template.height,
+            "node API template success"
+        );
         Ok(Some(template))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Real API payload shape from AZCOIN node.
+    const REAL_API_PAYLOAD: &str = r#"{
+        "job_id":"c68fdce62b92e2d8",
+        "prev_hash":"0000000000000000c589462bc769be8b4a12fddd736d5bd5e47966e10421222b",
+        "version":536870912,
+        "nbits":"1a020e7c",
+        "ntime":"69b33a70",
+        "clean_jobs":true,
+        "height":808523
+    }"#;
+
+    #[test]
+    fn test_deserialize_real_api_payload() {
+        let template: NodeApiTemplate = serde_json::from_str(REAL_API_PAYLOAD).unwrap();
+        assert_eq!(template.job_id, "c68fdce62b92e2d8");
+        assert_eq!(template.prev_hash, "0000000000000000c589462bc769be8b4a12fddd736d5bd5e47966e10421222b");
+        assert_eq!(template.version, 536870912);
+        assert_eq!(template.nbits, "1a020e7c");
+        assert_eq!(template.ntime, "69b33a70");
+        assert!(template.clean_jobs);
+        assert_eq!(template.height, 808523);
+    }
+
+    #[test]
+    fn test_bearer_auth_header_present_and_formatted() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/v1/az/mining/template/current")
+            .match_header("authorization", "Bearer testtoken-123")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(REAL_API_PAYLOAD)
+            .create();
+
+        let client = NodeApiClient::new(server.url(), Some("testtoken-123".to_string()));
+        assert!(client.auth_configured());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(client.get_template_current());
+        mock.assert();
+
+        let template = result.unwrap().unwrap();
+        assert_eq!(template.height, 808523);
+        assert_eq!(template.job_id, "c68fdce62b92e2d8");
+    }
+
+    #[test]
+    fn test_without_token_succeeds_when_server_does_not_require_auth() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/v1/az/mining/template/current")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(REAL_API_PAYLOAD)
+            .create();
+
+        let client = NodeApiClient::new(server.url(), None);
+        assert!(!client.auth_configured());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(client.get_template_current());
+        assert!(result.is_ok());
     }
 }

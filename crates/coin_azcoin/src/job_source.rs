@@ -59,9 +59,10 @@ pub struct NodeApiJobSource {
 }
 
 impl NodeApiJobSource {
-    pub fn new(base_url: impl Into<String>) -> Self {
+    /// Create with base URL and optional Bearer token for auth.
+    pub fn new(base_url: impl Into<String>, bearer_token: Option<String>) -> Self {
         Self {
-            client: Arc::new(NodeApiClient::new(base_url)),
+            client: Arc::new(NodeApiClient::new(base_url, bearer_token)),
         }
     }
 }

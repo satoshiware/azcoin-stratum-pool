@@ -1,0 +1,8 @@
+target
+.git
+docs
+scripts
+tests
+.env
+config.toml
+*.log

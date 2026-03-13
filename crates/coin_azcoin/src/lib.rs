@@ -9,10 +9,12 @@ pub mod daemon;
 pub mod job_source;
 pub mod node_api;
 pub mod payout_client;
+pub mod share_validator;
 pub mod template_mapper;
 
 pub use block_submit::*;
 pub use block_template::*;
+pub use share_validator::*;
 pub use chain_config::*;
 pub use daemon::*;
 pub use job_source::*;

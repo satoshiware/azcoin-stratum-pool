@@ -3,13 +3,61 @@
 
 use crate::{
     Job, JobSource, PoolStats, RecentSharesBuffer, ShareProcessor, ShareResult, ShareSubmission,
-    WorkerIdentity,
+    ShareValidator, WorkerIdentity,
 };
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+const ACTIVE_JOBS_MAX: usize = 64;
+
+/// In-memory registry of recently issued jobs. Bounded by ACTIVE_JOBS_MAX.
+/// Jobs are registered when mining.notify is sent. Share validation checks against this.
+#[derive(Default)]
+pub struct ActiveJobRegistry {
+    inner: RwLock<ActiveJobRegistryInner>,
+}
+
+#[derive(Default)]
+struct ActiveJobRegistryInner {
+    by_id: HashMap<String, Job>,
+    order: VecDeque<String>,
+}
+
+impl ActiveJobRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a job. Called when mining.notify is sent.
+    pub async fn register(&self, job: Job) {
+        let mut inner = self.inner.write().await;
+        if inner.by_id.contains_key(&job.job_id) {
+            return;
+        }
+        while inner.order.len() >= ACTIVE_JOBS_MAX {
+            if let Some(old_id) = inner.order.pop_front() {
+                inner.by_id.remove(&old_id);
+            }
+        }
+        inner.order.push_back(job.job_id.clone());
+        inner.by_id.insert(job.job_id.clone(), job);
+    }
+
+    /// Check if job_id is in the active/recent registry.
+    pub async fn contains(&self, job_id: &str) -> bool {
+        let inner = self.inner.read().await;
+        inner.by_id.contains_key(job_id)
+    }
+
+    /// Get job by id. Used for cryptographic validation.
+    pub async fn get_job(&self, job_id: &str) -> Option<Job> {
+        let inner = self.inner.read().await;
+        inner.by_id.get(job_id).cloned()
+    }
+}
 
 /// In-memory worker registry. Stub for the first slice.
 #[derive(Default)]
@@ -102,6 +150,78 @@ impl JobSource for StubJobSource {
     }
 }
 
+/// Job source that returns no job. For testing no-job behavior.
+#[derive(Default)]
+pub struct NoJobSource;
+
+#[async_trait]
+impl JobSource for NoJobSource {
+    async fn current_job(&self) -> Option<Job> {
+        None
+    }
+}
+
+/// Job source that returns a fixed job. For testing live notify.
+#[derive(Clone)]
+pub struct FixedJobSource {
+    job: Job,
+}
+
+impl FixedJobSource {
+    pub fn new(job: Job) -> Self {
+        Self { job }
+    }
+}
+
+#[async_trait]
+impl JobSource for FixedJobSource {
+    async fn current_job(&self) -> Option<Job> {
+        Some(self.job.clone())
+    }
+}
+
+/// Job source that returns jobs from a sequence. For testing prior-job acceptance.
+/// Each call to current_job() returns the next job in the list (wraps around).
+pub struct VecJobSource {
+    jobs: Vec<Job>,
+    next: std::sync::atomic::AtomicUsize,
+}
+
+impl VecJobSource {
+    pub fn new(jobs: Vec<Job>) -> Self {
+        Self {
+            jobs,
+            next: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl JobSource for VecJobSource {
+    async fn current_job(&self) -> Option<Job> {
+        if self.jobs.is_empty() {
+            return None;
+        }
+        let idx = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst) % self.jobs.len();
+        Some(self.jobs[idx].clone())
+    }
+}
+
+/// Test validator that always accepts. Used when crypto validation is not under test.
+pub struct AcceptAllShareValidator;
+
+impl ShareValidator for AcceptAllShareValidator {
+    fn validate_share(
+        &self,
+        _job: &Job,
+        _share: &ShareSubmission,
+        _extranonce1: &[u8],
+        _pool_difficulty: u32,
+    ) -> ShareResult {
+        ShareResult::Accepted
+    }
+}
+
 /// Stub share processor. Rejects all shares with a clear reason.
 pub struct StubShareProcessor {
     recent_buffer: Arc<RecentSharesBuffer>,
@@ -124,25 +244,158 @@ impl ShareProcessor for StubShareProcessor {
     }
 }
 
+/// Share processor that validates job linkage and optionally runs coin-specific crypto validation.
+pub struct JobAwareShareProcessor {
+    job_registry: Arc<ActiveJobRegistry>,
+    share_validator: Option<Arc<dyn ShareValidator>>,
+    pool_difficulty: u32,
+    recent_buffer: Arc<RecentSharesBuffer>,
+}
+
+impl JobAwareShareProcessor {
+    pub fn new(
+        job_registry: Arc<ActiveJobRegistry>,
+        recent_buffer: Arc<RecentSharesBuffer>,
+    ) -> Self {
+        Self {
+            job_registry,
+            share_validator: None,
+            pool_difficulty: 4,
+            recent_buffer,
+        }
+    }
+
+    pub fn with_validator(
+        job_registry: Arc<ActiveJobRegistry>,
+        share_validator: Arc<dyn ShareValidator>,
+        pool_difficulty: u32,
+        recent_buffer: Arc<RecentSharesBuffer>,
+    ) -> Self {
+        Self {
+            job_registry,
+            share_validator: Some(share_validator),
+            pool_difficulty,
+            recent_buffer,
+        }
+    }
+}
+
+#[async_trait]
+impl ShareProcessor for JobAwareShareProcessor {
+    async fn process_share(&self, share: ShareSubmission) -> ShareResult {
+        if let Some(ref ctx) = share.validation_context {
+            if let Some(expected_len) = ctx.expected_extra_nonce2_len {
+                if share.extra_nonce2.len() != expected_len {
+                    let result = ShareResult::Rejected {
+                        reason: format!(
+                            "extra_nonce2 must be {} bytes, got {}",
+                            expected_len,
+                            share.extra_nonce2.len()
+                        ),
+                    };
+                    self.recent_buffer.record(&share, &result).await;
+                    return result;
+                }
+            }
+        }
+
+        let job = match self.job_registry.get_job(&share.job_id).await {
+            Some(j) => j,
+            None => {
+                let result = ShareResult::UnknownJob {
+                    reason: format!("unknown job_id {}", share.job_id),
+                };
+                self.recent_buffer.record(&share, &result).await;
+                return result;
+            }
+        };
+
+        if let Some(ref validator) = self.share_validator {
+            let extranonce1 = match &share.validation_context {
+                Some(ctx) => match &ctx.extranonce1_hex {
+                    Some(hex) => match hex::decode(hex) {
+                        Ok(b) => b,
+                        Err(_) => {
+                            let result = ShareResult::Malformed {
+                                reason: "extranonce1 invalid hex".to_string(),
+                            };
+                            self.recent_buffer.record(&share, &result).await;
+                            return result;
+                        }
+                    },
+                    None => vec![0u8; 4],
+                },
+                None => vec![0u8; 4],
+            };
+            let result = validator.validate_share(&job, &share, &extranonce1, self.pool_difficulty);
+            self.recent_buffer.record(&share, &result).await;
+            result
+        } else {
+            let result = ShareResult::Accepted;
+            self.recent_buffer.record(&share, &result).await;
+            result
+        }
+    }
+}
+
 /// Bundles pool services for wiring. Used by main binary and API server.
 pub struct PoolServices {
     pub worker_registry: Arc<InMemoryWorkerRegistry>,
     pub stats: Arc<InMemoryStatsSnapshot>,
     pub job_source: Arc<dyn JobSource>,
+    pub job_registry: Arc<ActiveJobRegistry>,
     pub share_processor: Arc<dyn ShareProcessor>,
     pub recent_shares: Arc<RecentSharesBuffer>,
 }
 
 impl PoolServices {
     /// Create pool services with a custom job source (e.g. daemon-backed).
+    /// Without validator: accepts shares that pass shape and job_id checks.
     pub fn new(pool_name: impl Into<String>, job_source: Arc<dyn JobSource>) -> Self {
+        Self::new_inner(pool_name, job_source, None, 4)
+    }
+
+    /// Create pool services with coin-specific crypto validation.
+    pub fn new_with_validator(
+        pool_name: impl Into<String>,
+        job_source: Arc<dyn JobSource>,
+        share_validator: Arc<dyn ShareValidator>,
+        pool_difficulty: u32,
+    ) -> Self {
+        Self::new_inner(
+            pool_name,
+            job_source,
+            Some(share_validator),
+            pool_difficulty,
+        )
+    }
+
+    fn new_inner(
+        pool_name: impl Into<String>,
+        job_source: Arc<dyn JobSource>,
+        share_validator: Option<Arc<dyn ShareValidator>>,
+        pool_difficulty: u32,
+    ) -> Self {
         let recent_shares = Arc::new(RecentSharesBuffer::new());
-        let share_processor: Arc<dyn ShareProcessor> =
-            Arc::new(StubShareProcessor::new(Arc::clone(&recent_shares)));
+        let job_registry = Arc::new(ActiveJobRegistry::new());
+        let share_processor: Arc<dyn ShareProcessor> = if let Some(validator) = share_validator {
+            Arc::new(JobAwareShareProcessor::with_validator(
+                Arc::clone(&job_registry),
+                validator,
+                pool_difficulty,
+                Arc::clone(&recent_shares),
+            ))
+        } else {
+            Arc::new(JobAwareShareProcessor::new(
+                Arc::clone(&job_registry),
+                Arc::clone(&recent_shares),
+            ))
+        };
         Self {
             worker_registry: Arc::new(InMemoryWorkerRegistry::new()),
             stats: Arc::new(InMemoryStatsSnapshot::new(pool_name)),
             job_source,
+            job_registry,
             share_processor,
             recent_shares,
         }
@@ -151,5 +404,10 @@ impl PoolServices {
     /// Create pool services with stub job source (placeholder jobs only).
     pub fn with_stub_job_source(pool_name: impl Into<String>) -> Self {
         Self::new(pool_name, Arc::new(StubJobSource))
+    }
+
+    /// Create pool services with no job source (returns None). For testing no-job behavior.
+    pub fn with_no_job_source(pool_name: impl Into<String>) -> Self {
+        Self::new(pool_name, Arc::new(NoJobSource))
     }
 }

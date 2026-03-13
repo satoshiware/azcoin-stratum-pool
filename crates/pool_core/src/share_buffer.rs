@@ -29,11 +29,8 @@ impl RecentSharesBuffer {
         let attempt = ShareAttempt {
             worker_id: share.worker.id.clone(),
             job_id: share.job_id.clone(),
-            accepted: matches!(result, ShareResult::Accepted | ShareResult::Block),
-            reject_reason: match result {
-                ShareResult::Rejected { reason } => Some(reason.clone()),
-                _ => None,
-            },
+            accepted: result.is_accepted(),
+            reject_reason: result.reject_reason(),
         };
         let mut entries = self.entries.write().await;
         if entries.len() >= MAX_RECENT {

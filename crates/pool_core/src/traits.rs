@@ -17,6 +17,20 @@ pub trait ShareProcessor: Send + Sync {
     async fn process_share(&self, share: ShareSubmission) -> ShareResult;
 }
 
+/// Coin-specific cryptographic share validation. Reconstructs block header, hashes,
+/// and compares against target. Implemented by coin_azcoin.
+pub trait ShareValidator: Send + Sync {
+    /// Validate share against job. Returns Accepted, Block, LowDifficulty, or Malformed.
+    /// Called only when job is known and shape validation passed.
+    fn validate_share(
+        &self,
+        job: &Job,
+        share: &ShareSubmission,
+        extranonce1: &[u8],
+        pool_difficulty: u32,
+    ) -> ShareResult;
+}
+
 /// Manages mining rounds. Implemented by pool_core or storage-backed service.
 #[async_trait]
 pub trait RoundManager: Send + Sync {

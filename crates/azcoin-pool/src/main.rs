@@ -3,20 +3,22 @@
 
 use anyhow::Result;
 use api_server::{api_router, ApiState};
-use coin_azcoin::{NodeApiJobSource, RpcJobSource};
 use common::{init_tracing, load_config, JobSourceMode};
-use pool_core::{JobSource, PoolServices, ShareProcessor, WorkerIdentity};
+use pool_core::{JobSource, ShareProcessor, WorkerIdentity};
 use protocol_sv1::{run_stratum_listener, SessionEventHandler};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::info;
 
+use azcoin_pool::composition::build_pool_services;
+
 /// Session handler: stats, workers, job source, share processor.
 struct Sv1SessionHandler {
     stats: Arc<pool_core::InMemoryStatsSnapshot>,
     worker_registry: Arc<pool_core::InMemoryWorkerRegistry>,
     job_source: Arc<dyn JobSource>,
+    job_registry: Arc<pool_core::ActiveJobRegistry>,
     share_processor: Arc<dyn ShareProcessor>,
 }
 
@@ -33,8 +35,11 @@ impl SessionEventHandler for Sv1SessionHandler {
     async fn on_authorize(&self, username: &str) -> Result<Option<pool_core::Job>, String> {
         let worker = WorkerIdentity::new(username);
         self.worker_registry.register(worker).await;
-        let job = self.job_source.current_job().await;
-        Ok(job)
+        Ok(self.job_source.current_job().await)
+    }
+
+    async fn on_notify_sent(&self, job: pool_core::Job) {
+        self.job_registry.register(job).await;
     }
 
     async fn on_submit(&self, share: pool_core::ShareSubmission) -> pool_core::ShareResult {
@@ -57,25 +62,19 @@ async fn main() -> Result<()> {
         "azcoin-pool starting"
     );
 
-    let job_source: Arc<dyn JobSource> = match job_source_mode {
-        JobSourceMode::Rpc => {
-            info!("job source: RPC (getblocktemplate)");
-            Arc::new(RpcJobSource::new(&config.daemon))
-        }
-        JobSourceMode::Api => {
-            info!("job source: Node API (GET /v1/az/mining/template/current)");
-            Arc::new(NodeApiJobSource::new(&config.daemon.url))
-        }
-    };
+    match job_source_mode {
+        JobSourceMode::Rpc => info!("job source: RPC (getblocktemplate)"),
+        JobSourceMode::Api => info!("job source: Node API (GET /v1/az/mining/template/current)"),
+    }
 
-    // Construct pool services
-    let pool_services = Arc::new(PoolServices::new(&config.pool.name, job_source));
+    let pool_services = build_pool_services(&config);
 
     // SV1 session handler: stats + workers + job source + share processor
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(Sv1SessionHandler {
         stats: Arc::clone(&pool_services.stats),
         worker_registry: Arc::clone(&pool_services.worker_registry),
         job_source: Arc::clone(&pool_services.job_source),
+        job_registry: Arc::clone(&pool_services.job_registry),
         share_processor: Arc::clone(&pool_services.share_processor),
     });
 

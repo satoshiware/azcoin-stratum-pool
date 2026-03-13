@@ -17,8 +17,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/azcoin-pool /usr/local/bin/
+WORKDIR /app
+
+COPY --from=builder /app/target/release/azcoin-pool /usr/local/bin/azcoin-pool
 
 EXPOSE 8080 3333
 
-ENTRYPOINT ["azcoin-pool"]
+ENTRYPOINT ["/usr/local/bin/azcoin-pool"]

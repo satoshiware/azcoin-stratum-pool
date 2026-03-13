@@ -6,7 +6,7 @@ use crate::notify::build_mining_notify;
 use crate::session;
 use crate::session_state::SessionState;
 use async_trait::async_trait;
-use pool_core::{Job, ShareResult, ShareSubmission, WorkerIdentity};
+use pool_core::{Job, ShareResult, ShareSubmission, ShareValidationContext, WorkerIdentity};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -23,6 +23,9 @@ pub trait SessionEventHandler: Send + Sync {
     /// Ok(None) to accept without notify, Err(msg) to reject.
     async fn on_authorize(&self, username: &str) -> Result<Option<Job>, String>;
 
+    /// Called when mining.notify is actually sent to the miner. Register the job here.
+    async fn on_notify_sent(&self, _job: Job) {}
+
     /// Called when mining.submit is received with a valid ShareSubmission.
     async fn on_submit(&self, share: ShareSubmission) -> ShareResult;
 }
@@ -36,6 +39,8 @@ impl SessionEventHandler for () {
     async fn on_authorize(&self, _username: &str) -> Result<Option<Job>, String> {
         Ok(None)
     }
+
+    async fn on_notify_sent(&self, _job: Job) {}
 
     async fn on_submit(&self, _share: ShareSubmission) -> ShareResult {
         ShareResult::Rejected {
@@ -131,6 +136,8 @@ async fn handle_sv1_session(stream: TcpStream, handler: Arc<dyn SessionEventHand
                     break;
                 }
             }
+            // Register job when notify is actually sent
+            handler.on_notify_sent(job).await;
         }
     }
 }
@@ -149,11 +156,17 @@ async fn dispatch_request(
     session_state: &mut SessionState,
 ) -> (Option<Job>, Sv1Response) {
     let cmd = match map_request_to_command(req) {
-        Some(c) => c,
-        None => {
+        Ok(Some(c)) => c,
+        Ok(None) => {
             return (
                 None,
                 session::build_error_response(req.id.clone(), -32601, "Method not found"),
+            );
+        }
+        Err(msg) => {
+            return (
+                None,
+                session::build_submit_reject(req.id.clone(), &msg),
             );
         }
     };
@@ -210,17 +223,24 @@ async fn dispatch_request(
                     session::build_submit_reject(req.id.clone(), "username mismatch"),
                 );
             }
+            let validation_context = ShareValidationContext {
+                expected_extra_nonce2_len: Some(session_state.extranonce2_size as usize),
+                extranonce1_hex: Some(session_state.extranonce1.clone()),
+            };
             let share = ShareSubmission {
                 job_id: job_id.clone(),
                 worker,
                 extra_nonce2,
                 ntime,
                 nonce,
+                validation_context: Some(validation_context),
             };
             let result = handler.on_submit(share).await;
-            let (accepted, reason) = match &result {
-                ShareResult::Accepted | ShareResult::Block => (true, None),
-                ShareResult::Rejected { reason } => (false, Some(reason.as_str())),
+            let reject_reason = result.reject_reason();
+            let (accepted, reason) = if result.is_accepted() {
+                (true, None)
+            } else {
+                (false, reject_reason.as_deref())
             };
             info!(
                 worker = %username,
@@ -229,13 +249,13 @@ async fn dispatch_request(
                 reject_reason = ?reason,
                 "SV1 submit"
             );
-            let response = match &result {
-                ShareResult::Accepted | ShareResult::Block => {
-                    session::build_submit_success(req.id.clone())
-                }
-                ShareResult::Rejected { reason } => {
-                    session::build_submit_reject(req.id.clone(), reason)
-                }
+            let response = if result.is_accepted() {
+                session::build_submit_success(req.id.clone())
+            } else {
+                session::build_submit_reject(
+                    req.id.clone(),
+                    reject_reason.as_deref().unwrap_or("rejected"),
+                )
             };
             (None, response)
         }

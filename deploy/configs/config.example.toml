@@ -1,5 +1,20 @@
 # AZCOIN Pool Configuration
 # Copy to config.toml and adjust as needed
+#
+# Environment variable overrides (take precedence over TOML):
+#   Use double underscore (__) for nested keys.
+#
+#   DAEMON__JOB_SOURCE_MODE   "rpc" | "api"
+#   DAEMON__URL               Daemon/node base URL (RPC and Node API both use this)
+#   DAEMON__RPC_USER          RPC username (RPC mode only)
+#   DAEMON__RPC_PASSWORD      RPC password (RPC mode only)
+#   DAEMON__NODE_API_TOKEN    Bearer token (API mode only)
+#   API__BIND                 API server bind address
+#   API__PORT                 API server port
+#   STRATUM__BIND             Stratum server bind address
+#   STRATUM__PORT             Stratum server port
+#
+# Example: DAEMON__JOB_SOURCE_MODE=api DAEMON__URL=http://node:8332
 
 [pool]
 name = "azcoin-pool"
@@ -19,3 +34,5 @@ job_source_mode = "rpc"
 # Optional: RPC auth (leave empty if daemon has no auth)
 # rpc_user = ""
 # rpc_password = ""
+# Optional: Node API Bearer token (API mode only)
+# node_api_token = ""
