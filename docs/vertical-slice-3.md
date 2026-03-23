@@ -9,7 +9,7 @@ After successful SV1 subscribe/authorize, send a valid stub `mining.notify` base
 ### 1. pool_core
 
 - **Job model** — Refined with SV1-aligned fields: job_id, prev_hash, coinbase_part1, coinbase_part2, merkle_branch, version, nbits, ntime, clean_jobs
-- **Job::placeholder()** — Constructor for stub job
+- **Job::placeholder()** — Constructor for placeholder job
 - **StubJobSource** — Returns `Some(Job::placeholder())` instead of `None`
 - **PoolServices** — `job_source` typed as `Arc<dyn JobSource>`
 
@@ -32,7 +32,7 @@ After successful SV1 subscribe/authorize, send a valid stub `mining.notify` base
 ### 5. Testing
 
 - **sv1_subscribe_authorize** — Reads two lines after authorize; first is mining.notify, second is authorize response; asserts notify params
-- **pool_jobs_current_returns_stub_job** — API test for `/v1/pool/jobs/current`
+- **pool_jobs_current_returns_placeholder_job** — API test for `/v1/pool/jobs/current`
 
 ## Architecture Choices
 
@@ -57,3 +57,4 @@ cargo run -p azcoin-pool
 - Add `ShareProcessor` stub that returns `ShareResult::Rejected` for all
 - Wire `ShareProcessor` into SV1 handler
 - Session state: track authorized worker per connection for submit
+

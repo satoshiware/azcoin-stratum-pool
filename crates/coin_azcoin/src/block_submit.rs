@@ -23,9 +23,8 @@ impl AzcoinBlockSubmitter {
 #[async_trait]
 impl BlockSubmitter for AzcoinBlockSubmitter {
     async fn submit_block(&self, block: BlockCandidate) -> Result<bool, String> {
-        let hex_block = hex::encode(&block.raw_block);
         self.daemon
-            .submit_block(&hex_block)
+            .submit_block(&block.raw_block)
             .await
             .map_err(|e| e.to_string())
     }

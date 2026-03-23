@@ -2,6 +2,16 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Internal RPC block-assembly data preserved for block construction.
+#[derive(Debug, Clone, Default)]
+pub struct BlockAssemblyData {
+    pub height: u64,
+    pub coinbase_value: u64,
+    pub coinbase_aux_flags: Option<Vec<u8>>,
+    pub template_transactions: Vec<Vec<u8>>,
+    pub default_witness_commitment: Option<Vec<u8>>,
+}
+
 /// A mining job assigned to workers. Fields align with Stratum V1 notify params
 /// but the model itself is protocol-agnostic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +33,9 @@ pub struct Job {
     pub ntime: u32,
     /// If true, miner should discard previous jobs.
     pub clean_jobs: bool,
+    /// Internal block-assembly data from RPC. Not exposed to miners/API.
+    #[serde(skip)]
+    pub block_assembly: Option<BlockAssemblyData>,
 }
 
 impl Job {
@@ -38,6 +51,7 @@ impl Job {
             nbits: 0x1d00ffff,
             ntime: 0,
             clean_jobs: true,
+            block_assembly: None,
         }
     }
 }

@@ -3,49 +3,16 @@
 
 use anyhow::Result;
 use api_server::{api_router, ApiState};
+use azcoin_pool::sv1_handler::Sv1SessionHandler;
 use common::{init_tracing, load_config, JobSourceMode};
-use pool_core::{JobSource, ShareProcessor, WorkerIdentity};
+use coin_azcoin::AzcoinBlockSubmitter;
+use pool_core::BlockSubmitter;
 use protocol_sv1::{run_stratum_listener, SessionEventHandler};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
 
 use azcoin_pool::composition::build_pool_services;
-
-/// Session handler: stats, workers, job source, share processor.
-struct Sv1SessionHandler {
-    stats: Arc<pool_core::InMemoryStatsSnapshot>,
-    worker_registry: Arc<pool_core::InMemoryWorkerRegistry>,
-    job_source: Arc<dyn JobSource>,
-    job_registry: Arc<pool_core::ActiveJobRegistry>,
-    share_processor: Arc<dyn ShareProcessor>,
-}
-
-#[async_trait::async_trait]
-impl SessionEventHandler for Sv1SessionHandler {
-    fn on_connect(&self, _peer: SocketAddr) {
-        self.stats.record_connection();
-    }
-
-    fn on_disconnect(&self, _peer: SocketAddr) {
-        self.stats.record_disconnection();
-    }
-
-    async fn on_authorize(&self, username: &str) -> Result<Option<pool_core::Job>, String> {
-        let worker = WorkerIdentity::new(username);
-        self.worker_registry.register(worker).await;
-        Ok(self.job_source.current_job().await)
-    }
-
-    async fn on_notify_sent(&self, job: pool_core::Job) {
-        self.job_registry.register(job).await;
-    }
-
-    async fn on_submit(&self, share: pool_core::ShareSubmission) -> pool_core::ShareResult {
-        self.share_processor.process_share(share).await
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -64,10 +31,24 @@ async fn main() -> Result<()> {
 
     match job_source_mode {
         JobSourceMode::Rpc => info!("job source: RPC (getblocktemplate)"),
-        JobSourceMode::Api => info!("job source: Node API (GET /v1/az/mining/template/current)"),
+        JobSourceMode::Api => {
+            info!("job source: Node API (GET /v1/az/mining/template/current)");
+            warn!("API mode sources jobs from the node API, but live submitblock still targets daemon.url as JSON-RPC; use RPC mode for end-to-end block submission validation unless the same base URL serves both");
+        }
     }
 
     let pool_services = build_pool_services(&config);
+    let payout_script_pubkey = config.pool.payout_script_pubkey_bytes().map_err(|e| anyhow::anyhow!("{}", e))?;
+    if payout_script_pubkey.is_some() {
+        info!("block-found submission is armed: pool payout scriptPubKey is configured");
+    } else {
+        warn!("block-found submission is disabled: pool.payout_script_pubkey_hex is not configured");
+    }
+    let block_submitter: Arc<dyn BlockSubmitter> = Arc::new(AzcoinBlockSubmitter::new(
+        &config.daemon.url,
+        &config.daemon.rpc_user,
+        &config.daemon.rpc_password,
+    ));
 
     // SV1 session handler: stats + workers + job source + share processor
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(Sv1SessionHandler {
@@ -76,6 +57,8 @@ async fn main() -> Result<()> {
         job_source: Arc::clone(&pool_services.job_source),
         job_registry: Arc::clone(&pool_services.job_registry),
         share_processor: Arc::clone(&pool_services.share_processor),
+        block_submitter,
+        payout_script_pubkey,
     });
 
     // Start SV1 listener in background

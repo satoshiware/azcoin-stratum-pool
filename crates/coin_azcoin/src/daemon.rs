@@ -25,6 +25,7 @@ pub struct BlockTemplate {
     pub height: u64,
     pub transactions: Vec<TransactionEntry>,
     pub coinbasevalue: u64,
+    pub coinbaseaux: Option<CoinbaseAux>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +33,11 @@ pub struct TransactionEntry {
     pub data: String,
     pub txid: Option<String>,
     pub hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CoinbaseAux {
+    pub flags: Option<String>,
 }
 
 impl DaemonClient {
@@ -108,7 +114,10 @@ impl DaemonClient {
         debug!(url = %self.url, "daemon getblocktemplate");
         // TODO: AZCOIN may use different params. Bitcoin uses {} or {"rules": ["segwit"]}.
         let result = self
-            .rpc_call("getblocktemplate", serde_json::json!([{}]))
+            .rpc_call(
+                "getblocktemplate",
+                serde_json::json!([{ "rules": ["segwit"] }]),
+            )
             .await
             .map_err(|e| {
                 warn!(error = %e, "daemon getblocktemplate failed");
@@ -121,8 +130,114 @@ impl DaemonClient {
         Ok(Some(template))
     }
 
-    /// Placeholder: submit block to daemon.
-    pub async fn submit_block(&self, _hex_block: &str) -> Result<bool, PoolError> {
-        Err(PoolError::Daemon("submit_block not implemented".into()))
+    /// Submit a fully assembled raw block to the daemon via submitblock.
+    pub async fn submit_block(&self, raw_block: &[u8]) -> Result<bool, PoolError> {
+        let result = self
+            .rpc_call("submitblock", serde_json::json!([hex::encode(raw_block)]))
+            .await?;
+
+        match result {
+            serde_json::Value::Null => Ok(true),
+            serde_json::Value::String(reason) if reason.trim().is_empty() => Ok(true),
+            serde_json::Value::String(reason) => {
+                Err(PoolError::Daemon(format!("submitblock rejected: {}", reason)))
+            }
+            other => Err(PoolError::Daemon(format!(
+                "submitblock returned unexpected result: {}",
+                other
+            ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Matcher;
+
+    fn build_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_submit_block_success_when_rpc_returns_null() {
+        let mut server = mockito::Server::new();
+        let raw_block = vec![0x01, 0x02, 0x03, 0x04];
+        let mock = server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex(r#""method":"submitblock""#.to_string()))
+            .match_body(Matcher::Regex(r#""01020304""#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"result":null,"error":null,"id":"azcoin-pool"}"#)
+            .create();
+
+        let client = DaemonClient::new(server.url(), "", "");
+        let result = build_runtime().block_on(client.submit_block(&raw_block));
+        mock.assert();
+
+        assert_eq!(result.unwrap(), true);
+    }
+
+    #[test]
+    fn test_submit_block_reject_when_rpc_returns_reason_string() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"result":"high-hash","error":null,"id":"azcoin-pool"}"#)
+            .create();
+
+        let client = DaemonClient::new(server.url(), "", "");
+        let err = build_runtime()
+            .block_on(client.submit_block(&[0xaa, 0xbb]))
+            .unwrap_err();
+
+        assert!(matches!(err, PoolError::Daemon(_)));
+        assert!(err.to_string().contains("submitblock rejected: high-hash"));
+    }
+
+    #[test]
+    fn test_submit_block_unexpected_response_shape_fails_clearly() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"result":{"status":"ok"},"error":null,"id":"azcoin-pool"}"#)
+            .create();
+
+        let client = DaemonClient::new(server.url(), "", "");
+        let err = build_runtime()
+            .block_on(client.submit_block(&[0xaa, 0xbb]))
+            .unwrap_err();
+
+        assert!(matches!(err, PoolError::Daemon(_)));
+        assert!(err
+            .to_string()
+            .contains("submitblock returned unexpected result"));
+    }
+
+    #[test]
+    fn test_submit_block_request_payload_contains_hex_encoded_block() {
+        let mut server = mockito::Server::new();
+        let raw_block = vec![0xde, 0xad, 0xbe, 0xef];
+        let mock = server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex(r#""params":\["deadbeef"\]"#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"result":"","error":null,"id":"azcoin-pool"}"#)
+            .create();
+
+        let client = DaemonClient::new(server.url(), "", "");
+        let result = build_runtime().block_on(client.submit_block(&raw_block));
+        mock.assert();
+
+        assert_eq!(result.unwrap(), true);
     }
 }

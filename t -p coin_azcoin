@@ -1,0 +1,278 @@
+warning: in the working copy of 'crates/coin_azcoin/Cargo.toml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/coin_azcoin/src/api_template_mapper.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/coin_azcoin/src/daemon.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/coin_azcoin/src/lib.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/coin_azcoin/src/share_validator.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/coin_azcoin/src/template_mapper.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/pool_core/src/job.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/pool_core/src/services.rs', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/crates/coin_azcoin/Cargo.toml b/crates/coin_azcoin/Cargo.toml[m
+[1mindex 833c427..25afc2c 100644[m
+[1m--- a/crates/coin_azcoin/Cargo.toml[m
+[1m+++ b/crates/coin_azcoin/Cargo.toml[m
+[36m@@ -17,6 +17,7 @@[m [masync-trait = "0.1"[m
+ hex = "0.4"[m
+ tracing = "0.1"[m
+ reqwest = { version = "0.11", features = ["json"] }[m
+[32m+[m[32mbitcoin = "0.32"[m
+ [m
+ [dev-dependencies][m
+ mockito = "1"[m
+[1mdiff --git a/crates/coin_azcoin/src/api_template_mapper.rs b/crates/coin_azcoin/src/api_template_mapper.rs[m
+[1mindex 3c8c6fe..a265bc2 100644[m
+[1m--- a/crates/coin_azcoin/src/api_template_mapper.rs[m
+[1m+++ b/crates/coin_azcoin/src/api_template_mapper.rs[m
+[36m@@ -27,6 +27,7 @@[m [mpub fn api_template_to_job(template: &NodeApiTemplate) -> Result<Job, PoolError>[m
+         nbits,[m
+         ntime,[m
+         clean_jobs: template.clean_jobs,[m
+[32m+[m[32m        block_assembly: None,[m
+     })[m
+ }[m
+ [m
+[1mdiff --git a/crates/coin_azcoin/src/daemon.rs b/crates/coin_azcoin/src/daemon.rs[m
+[1mindex 3445050..a355095 100644[m
+[1m--- a/crates/coin_azcoin/src/daemon.rs[m
+[1m+++ b/crates/coin_azcoin/src/daemon.rs[m
+[36m@@ -25,6 +25,7 @@[m [mpub struct BlockTemplate {[m
+     pub height: u64,[m
+     pub transactions: Vec<TransactionEntry>,[m
+     pub coinbasevalue: u64,[m
+[32m+[m[32m    pub coinbaseaux: Option<CoinbaseAux>,[m
+ }[m
+ [m
+ #[derive(Debug, Deserialize)][m
+[36m@@ -34,6 +35,11 @@[m [mpub struct TransactionEntry {[m
+     pub hash: Option<String>,[m
+ }[m
+ [m
+[32m+[m[32m#[derive(Debug, Deserialize)][m
+[32m+[m[32mpub struct CoinbaseAux {[m
+[32m+[m[32m    pub flags: Option<String>,[m
+[32m+[m[32m}[m
+[32m+[m
+ impl DaemonClient {[m
+     pub fn new([m
+         url: impl Into<String>,[m
+[36m@@ -108,7 +114,10 @@[m [mimpl DaemonClient {[m
+         debug!(url = %self.url, "daemon getblocktemplate");[m
+         // TODO: AZCOIN may use different params. Bitcoin uses {} or {"rules": ["segwit"]}.[m
+         let result = self[m
+[31m-            .rpc_call("getblocktemplate", serde_json::json!([{}]))[m
+[32m+[m[32m            .rpc_call([m
+[32m+[m[32m                "getblocktemplate",[m
+[32m+[m[32m                serde_json::json!([{ "rules": ["segwit"] }]),[m
+[32m+[m[32m            )[m
+             .await[m
+             .map_err(|e| {[m
+                 warn!(error = %e, "daemon getblocktemplate failed");[m
+[1mdiff --git a/crates/coin_azcoin/src/lib.rs b/crates/coin_azcoin/src/lib.rs[m
+[1mindex f34947f..a8cedc5 100644[m
+[1m--- a/crates/coin_azcoin/src/lib.rs[m
+[1m+++ b/crates/coin_azcoin/src/lib.rs[m
+[36m@@ -5,6 +5,7 @@[m [mpub mod api_template_mapper;[m
+ pub mod block_submit;[m
+ pub mod block_template;[m
+ pub mod chain_config;[m
+[32m+[m[32mmod coinbase_builder;[m
+ pub mod daemon;[m
+ pub mod job_source;[m
+ pub mod node_api;[m
+[1mdiff --git a/crates/coin_azcoin/src/share_validator.rs b/crates/coin_azcoin/src/share_validator.rs[m
+[1mindex 86ce73a..767277b 100644[m
+[1m--- a/crates/coin_azcoin/src/share_validator.rs[m
+[1m+++ b/crates/coin_azcoin/src/share_validator.rs[m
+[36m@@ -233,6 +233,7 @@[m [mmod tests {[m
+             nbits: 0x1d00ffff,[m
+             ntime: 0,[m
+             clean_jobs: true,[m
+[32m+[m[32m            block_assembly: None,[m
+         };[m
+         let share = ShareSubmission {[m
+             job_id: "test".to_string(),[m
+[1mdiff --git a/crates/coin_azcoin/src/template_mapper.rs b/crates/coin_azcoin/src/template_mapper.rs[m
+[1mindex 6d82a17..8f00ff3 100644[m
+[1m--- a/crates/coin_azcoin/src/template_mapper.rs[m
+[1m+++ b/crates/coin_azcoin/src/template_mapper.rs[m
+[36m@@ -3,7 +3,7 @@[m
+ [m
+ use crate::daemon::BlockTemplate;[m
+ use common::PoolError;[m
+[31m-use pool_core::Job;[m
+[32m+[m[32muse pool_core::{BlockAssemblyData, Job};[m
+ [m
+ /// Normalize timestamp to u32 for pool_core::Job. Same for RPC and API.[m
+ fn ntime_to_u32(curtime: u64) -> u32 {[m
+[36m@@ -15,6 +15,7 @@[m [mpub fn template_to_job(template: &BlockTemplate) -> Result<Job, PoolError> {[m
+     let prev_hash = decode_prev_hash(&template.previousblockhash)?;[m
+     let nbits = decode_bits(&template.bits)?;[m
+     let merkle_branch = build_merkle_branch(template);[m
+[32m+[m[32m    let coinbase_aux_flags = decode_coinbase_aux_flags(template)?;[m
+ [m
+     // TODO: AZCOIN-specific coinbase construction. Pool must build coinbase from[m
+     // coinbasevalue, height, extranonce, etc. For now use minimal placeholder parts.[m
+[36m@@ -30,6 +31,13 @@[m [mpub fn template_to_job(template: &BlockTemplate) -> Result<Job, PoolError> {[m
+         nbits,[m
+         ntime: ntime_to_u32(template.curtime),[m
+         clean_jobs: true,[m
+[32m+[m[32m        block_assembly: Some(BlockAssemblyData {[m
+[32m+[m[32m            height: template.height,[m
+[32m+[m[32m            coinbase_value: template.coinbasevalue,[m
+[32m+[m[32m            coinbase_aux_flags,[m
+[32m+[m[32m            template_transactions: Vec::new(),[m
+[32m+[m[32m            default_witness_commitment: None,[m
+[32m+[m[32m        }),[m
+     })[m
+ }[m
+ [m
+[36m@@ -58,6 +66,20 @@[m [mpub(crate) fn decode_bits(hex: &str) -> Result<u32, PoolError> {[m
+     Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))[m
+ }[m
+ [m
+[32m+[m[32mfn decode_coinbase_aux_flags(template: &BlockTemplate) -> Result<Option<Vec<u8>>, PoolError> {[m
+[32m+[m[32m    let Some(flags) = template.coinbaseaux.as_ref().and_then(|aux| aux.flags.as_ref()) else {[m
+[32m+[m[32m        return Ok(None);[m
+[32m+[m[32m    };[m
+[32m+[m[32m    let flags = flags.trim();[m
+[32m+[m[32m    if flags.is_empty() {[m
+[32m+[m[32m        return Ok(None);[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    hex::decode(flags)[m
+[32m+[m[32m        .map(Some)[m
+[32m+[m[32m        .map_err(|e| PoolError::Daemon(format!("coinbaseaux.flags hex: {}", e)))[m
+[32m+[m[32m}[m
+[32m+[m
+ /// Build merkle branch from transaction hashes.[m
+ /// TODO: AZCOIN merkle format may differ. Use txid/hash from template when available.[m
+ fn build_merkle_branch(template: &BlockTemplate) -> Vec<[u8; 32]> {[m
+[36m@@ -90,7 +112,7 @@[m [mfn build_coinbase_parts(template: &BlockTemplate) -> (Vec<u8>, Vec<u8>) {[m
+ #[cfg(test)][m
+ mod tests {[m
+     use super::*;[m
+[31m-    use crate::daemon::{BlockTemplate, TransactionEntry};[m
+[32m+[m[32m    use crate::daemon::{BlockTemplate, CoinbaseAux, TransactionEntry};[m
+ [m
+     fn fixture_template() -> BlockTemplate {[m
+         BlockTemplate {[m
+[36m@@ -106,6 +128,7 @@[m [mmod tests {[m
+                 hash: Some("b".repeat(64)),[m
+             }],[m
+             coinbasevalue: 5000000000,[m
+[32m+[m[32m            coinbaseaux: None,[m
+         }[m
+     }[m
+ [m
+[36m@@ -127,6 +150,12 @@[m [mmod tests {[m
+         // coinbase parts include height[m
+         assert!(job.coinbase_part1.len() >= 5 + 8);[m
+         assert_eq!(job.coinbase_part2, vec![0xff, 0xff, 0xff, 0xff]);[m
+[32m+[m[32m        assert_eq!([m
+[32m+[m[32m            job.block_assembly[m
+[32m+[m[32m                .as_ref()[m
+[32m+[m[32m                .and_then(|assembly| assembly.coinbase_aux_flags.as_ref()),[m
+[32m+[m[32m            None[m
+[32m+[m[32m        );[m
+     }[m
+ [m
+     #[test][m
+[36m@@ -150,4 +179,31 @@[m [mmod tests {[m
+         template.bits = "1d00ff".to_string(); // 3 bytes, not 4[m
+         assert!(template_to_job(&template).is_err());[m
+     }[m
+[32m+[m
+[32m+[m[32m    #[test][m
+[32m+[m[32m    fn test_template_to_job_preserves_coinbase_aux_flags() {[m
+[32m+[m[32m        let mut template = fixture_template();[m
+[32m+[m[32m        template.coinbaseaux = Some(CoinbaseAux {[m
+[32m+[m[32m            flags: Some("deadbeef".to_string()),[m
+[32m+[m[32m        });[m
+[32m+[m
+[32m+[m[32m        let job = template_to_job(&template).unwrap();[m
+[32m+[m
+[32m+[m[32m        assert_eq!([m
+[32m+[m[32m            job.block_assembly.unwrap().coinbase_aux_flags,[m
+[32m+[m[32m            Some(vec![0xde, 0xad, 0xbe, 0xef])[m
+[32m+[m[32m        );[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    #[test][m
+[32m+[m[32m    fn test_template_to_job_invalid_coinbase_aux_flags_fails() {[m
+[32m+[m[32m        let mut template = fixture_template();[m
+[32m+[m[32m        template.coinbaseaux = Some(CoinbaseAux {[m
+[32m+[m[32m            flags: Some("abc".to_string()),[m
+[32m+[m[32m        });[m
+[32m+[m
+[32m+[m[32m        let err = template_to_job(&template).unwrap_err();[m
+[32m+[m[32m        assert!(matches!(err, PoolError::Daemon(_)));[m
+[32m+[m[32m        assert!(err.to_string().contains("coinbaseaux.flags hex"));[m
+[32m+[m[32m    }[m
+ }[m
+[1mdiff --git a/crates/pool_core/src/job.rs b/crates/pool_core/src/job.rs[m
+[1mindex 4caf0bd..cf2909d 100644[m
+[1m--- a/crates/pool_core/src/job.rs[m
+[1m+++ b/crates/pool_core/src/job.rs[m
+[36m@@ -2,6 +2,16 @@[m
+ [m
+ use serde::{Deserialize, Serialize};[m
+ [m
+[32m+[m[32m/// Internal RPC block-assembly data preserved for block construction.[m
+[32m+[m[32m#[derive(Debug, Clone, Default)][m
+[32m+[m[32mpub struct BlockAssemblyData {[m
+[32m+[m[32m    pub height: u64,[m
+[32m+[m[32m    pub coinbase_value: u64,[m
+[32m+[m[32m    pub coinbase_aux_flags: Option<Vec<u8>>,[m
+[32m+[m[32m    pub template_transactions: Vec<Vec<u8>>,[m
+[32m+[m[32m    pub default_witness_commitment: Option<Vec<u8>>,[m
+[32m+[m[32m}[m
+[32m+[m
+ /// A mining job assigned to workers. Fields align with Stratum V1 notify params[m
+ /// but the model itself is protocol-agnostic.[m
+ #[derive(Debug, Clone, Serialize, Deserialize)][m
+[36m@@ -23,6 +33,9 @@[m [mpub struct Job {[m
+     pub ntime: u32,[m
+     /// If true, miner should discard previous jobs.[m
+     pub clean_jobs: bool,[m
+[32m+[m[32m    /// Internal block-assembly data from RPC. Not exposed to miners/API.[m
+[32m+[m[32m    #[serde(skip)][m
+[32m+[m[32m    pub block_assembly: Option<BlockAssemblyData>,[m
+ }[m
+ [m
+ impl Job {[m
+[36m@@ -38,6 +51,7 @@[m [mimpl Job {[m
+             nbits: 0x1d00ffff,[m
+             ntime: 0,[m
+             clean_jobs: true,[m
+[32m+[m[32m            block_assembly: None,[m
+         }[m
+     }[m
+ }[m
+[1mdiff --git a/crates/pool_core/src/services.rs b/crates/pool_core/src/services.rs[m
+[1mindex bf920e5..6706e52 100644[m
+[1m--- a/crates/pool_core/src/services.rs[m
+[1m+++ b/crates/pool_core/src/services.rs[m
+[36m@@ -139,7 +139,7 @@[m [mimpl InMemoryStatsSnapshot {[m
+     }[m
+ }[m
+ [m
+[31m-/// Placeholder job source. Returns a single stub job for notify skeleton.[m
+[32m+[m[32m/// Placeholder job source. Returns a single placeholder job for notify skeleton.[m
+ #[derive(Default)][m
+ pub struct StubJobSource;[m
+ [m
+[36m@@ -401,8 +401,8 @@[m [mimpl PoolServices {[m
+         }[m
+     }[m
+ [m
+[31m-    /// Create pool services with stub job source (placeholder jobs only).[m
+[31m-    pub fn with_stub_job_source(pool_name: impl Into<String>) -> Self {[m
+[32m+[m[32m    /// Create pool services with placeholder job source (placeholder jobs only).[m
+[32m+[m[32m    pub fn with_placeholder_job_source(pool_name: impl Into<String>) -> Self {[m
+         Self::new(pool_name, Arc::new(StubJobSource))[m
+     }[m
+ [m
+[36m@@ -411,3 +411,4 @@[m [mimpl PoolServices {[m
+         Self::new(pool_name, Arc::new(NoJobSource))[m
+     }[m
+ }[m
+[41m+[m

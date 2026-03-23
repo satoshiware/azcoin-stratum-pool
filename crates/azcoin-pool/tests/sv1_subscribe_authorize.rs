@@ -64,7 +64,7 @@ async fn send_sv1_request(stream: &mut tokio::net::TcpStream, req: &serde_json::
 
 #[tokio::test]
 async fn sv1_subscribe_authorize_worker_in_api() {
-    let pool_services = Arc::new(PoolServices::with_stub_job_source("test-pool"));
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
         worker_registry: Arc::clone(&pool_services.worker_registry),
         job_source: Arc::clone(&pool_services.job_source),
@@ -132,7 +132,7 @@ async fn sv1_subscribe_authorize_worker_in_api() {
     assert_eq!(params[0], "0", "job_id");
     assert_eq!(params[8], true, "clean_jobs");
 
-    // Send submit - job_id "0" matches stub job, expect acceptance
+    // Send submit - job_id "0" matches placeholder job, expect acceptance
     let submit_req = serde_json::json!({
         "id": 3,
         "method": "mining.submit",
@@ -205,6 +205,7 @@ async fn sv1_live_notify_has_job_data() {
         nbits: 0x1a020e7c,
         ntime: 0x69b33a70,
         clean_jobs: true,
+        block_assembly: None,
     };
     let job_source: Arc<dyn JobSource> = Arc::new(FixedJobSource::new(live_job));
     let pool_services = Arc::new(PoolServices::new(
@@ -303,7 +304,7 @@ async fn sv1_no_job_no_notify() {
 /// Malformed mining.submit is rejected with explicit reason.
 #[tokio::test]
 async fn sv1_submit_malformed_rejected() {
-    let pool_services = Arc::new(PoolServices::with_stub_job_source("test-pool"));
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
         worker_registry: Arc::clone(&pool_services.worker_registry),
         job_source: Arc::clone(&pool_services.job_source),
@@ -352,7 +353,7 @@ async fn sv1_submit_malformed_rejected() {
 /// Malformed nonce (wrong length) is rejected at parse time.
 #[tokio::test]
 async fn sv1_submit_malformed_nonce_rejected() {
-    let pool_services = Arc::new(PoolServices::with_stub_job_source("test-pool"));
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
         worker_registry: Arc::clone(&pool_services.worker_registry),
         job_source: Arc::clone(&pool_services.job_source),
@@ -401,7 +402,7 @@ async fn sv1_submit_malformed_nonce_rejected() {
 /// Malformed ntime (wrong length) is rejected at parse time.
 #[tokio::test]
 async fn sv1_submit_malformed_ntime_rejected() {
-    let pool_services = Arc::new(PoolServices::with_stub_job_source("test-pool"));
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
         worker_registry: Arc::clone(&pool_services.worker_registry),
         job_source: Arc::clone(&pool_services.job_source),
@@ -450,7 +451,7 @@ async fn sv1_submit_malformed_ntime_rejected() {
 /// Wrong extranonce2 size (session expects 4 bytes) is rejected and recorded in recent shares.
 #[tokio::test]
 async fn sv1_submit_wrong_extranonce2_size_rejected() {
-    let pool_services = Arc::new(PoolServices::with_stub_job_source("test-pool"));
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
         worker_registry: Arc::clone(&pool_services.worker_registry),
         job_source: Arc::clone(&pool_services.job_source),
@@ -704,7 +705,7 @@ async fn sv1_submit_malformed_extranonce1_rejected() {
 /// Unknown job_id is rejected and appears in recent shares.
 #[tokio::test]
 async fn sv1_submit_unknown_job_rejected() {
-    let pool_services = Arc::new(PoolServices::with_stub_job_source("test-pool"));
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
         worker_registry: Arc::clone(&pool_services.worker_registry),
         job_source: Arc::clone(&pool_services.job_source),
@@ -735,7 +736,7 @@ async fn sv1_submit_unknown_job_rejected() {
     let _ = read_sv1_line(&mut stream).await;
     let _ = read_sv1_line(&mut stream).await;
 
-    // job_id "unknown-job" does not match stub job "0"
+    // job_id "unknown-job" does not match placeholder job "0"
     let submit_req = serde_json::json!({
         "id": 3,
         "method": "mining.submit",
@@ -790,6 +791,7 @@ async fn sv1_job_registered_when_notify_emitted() {
         nbits: 0x1d00ffff,
         ntime: 0,
         clean_jobs: true,
+        block_assembly: None,
     };
     let job_source: Arc<dyn JobSource> = Arc::new(FixedJobSource::new(live_job));
     let pool_services = Arc::new(PoolServices::new("test-pool", job_source));
@@ -849,6 +851,7 @@ async fn sv1_submit_valid_accepted_in_recent() {
         nbits: 0x1d00ffff,
         ntime: 0,
         clean_jobs: true,
+        block_assembly: None,
     };
     let job_source: Arc<dyn JobSource> = Arc::new(FixedJobSource::new(live_job));
     let pool_services = Arc::new(PoolServices::new("test-pool", job_source));
@@ -927,6 +930,7 @@ async fn sv1_submit_prior_job_accepted() {
         nbits: 0x1d00ffff,
         ntime: 0,
         clean_jobs: true,
+        block_assembly: None,
     };
     let job_b = Job {
         job_id: "job-b".to_string(),
@@ -938,6 +942,7 @@ async fn sv1_submit_prior_job_accepted() {
         nbits: 0x1d00ffff,
         ntime: 1,
         clean_jobs: true,
+        block_assembly: None,
     };
     let job_source: Arc<dyn JobSource> =
         Arc::new(VecJobSource::new(vec![job_a.clone(), job_b.clone()]));
@@ -1071,3 +1076,4 @@ async fn sv1_submit_no_issued_jobs_rejected() {
     assert_eq!(shares.len(), 1);
     assert_eq!(shares[0]["accepted"], false);
 }
+

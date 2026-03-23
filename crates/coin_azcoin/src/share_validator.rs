@@ -36,27 +36,7 @@ impl ShareValidator for AzcoinShareValidator {
     ) -> ShareResult {
         let diff = pool_difficulty.max(1);
 
-        // 1. Reconstruct coinbase: part1 || extranonce1 || extranonce2 || part2
-        let mut coinbase = Vec::with_capacity(
-            job.coinbase_part1.len() + extranonce1.len() + share.extra_nonce2.len() + job.coinbase_part2.len(),
-        );
-        coinbase.extend_from_slice(&job.coinbase_part1);
-        coinbase.extend_from_slice(extranonce1);
-        coinbase.extend_from_slice(&share.extra_nonce2);
-        coinbase.extend_from_slice(&job.coinbase_part2);
-
-        // 2. Merkle root for single-coinbase block
-        let merkle_root = double_sha256(&coinbase);
-
-        // 3. Build 80-byte block header (little-endian)
-        let header = build_block_header(
-            job.version,
-            &job.prev_hash,
-            &merkle_root,
-            share.ntime,
-            job.nbits,
-            share.nonce,
-        );
+        let header = build_solved_block_header(job, share, extranonce1);
 
         // 4. Double SHA256 of header
         let hash = double_sha256(&header);
@@ -78,6 +58,31 @@ impl ShareValidator for AzcoinShareValidator {
             }
         }
     }
+}
+
+/// Reconstruct the solved 80-byte block header from a validated share path.
+pub fn build_solved_block_header(job: &Job, share: &ShareSubmission, extranonce1: &[u8]) -> Vec<u8> {
+    // 1. Reconstruct coinbase: part1 || extranonce1 || extranonce2 || part2
+    let mut coinbase = Vec::with_capacity(
+        job.coinbase_part1.len() + extranonce1.len() + share.extra_nonce2.len() + job.coinbase_part2.len(),
+    );
+    coinbase.extend_from_slice(&job.coinbase_part1);
+    coinbase.extend_from_slice(extranonce1);
+    coinbase.extend_from_slice(&share.extra_nonce2);
+    coinbase.extend_from_slice(&job.coinbase_part2);
+
+    // 2. Merkle root for single-coinbase block
+    let merkle_root = double_sha256(&coinbase);
+
+    // 3. Build 80-byte block header (little-endian)
+    build_block_header(
+        job.version,
+        &job.prev_hash,
+        &merkle_root,
+        share.ntime,
+        job.nbits,
+        share.nonce,
+    )
 }
 
 /// Build 80-byte Bitcoin block header: version | prev_hash | merkle_root | ntime | nbits | nonce.
@@ -233,6 +238,7 @@ mod tests {
             nbits: 0x1d00ffff,
             ntime: 0,
             clean_jobs: true,
+            block_assembly: None,
         };
         let share = ShareSubmission {
             job_id: "test".to_string(),

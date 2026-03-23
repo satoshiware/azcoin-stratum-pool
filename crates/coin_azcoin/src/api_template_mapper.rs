@@ -27,6 +27,7 @@ pub fn api_template_to_job(template: &NodeApiTemplate) -> Result<Job, PoolError>
         nbits,
         ntime,
         clean_jobs: template.clean_jobs,
+        block_assembly: None,
     })
 }
 

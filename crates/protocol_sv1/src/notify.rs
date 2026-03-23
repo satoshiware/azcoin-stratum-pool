@@ -54,6 +54,7 @@ mod tests {
             nbits: 0x1d00ffff,
             ntime: 0x69b33a70,
             clean_jobs: true,
+            block_assembly: None,
         };
 
         let notify = build_mining_notify(&job);

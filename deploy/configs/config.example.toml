@@ -18,6 +18,9 @@
 
 [pool]
 name = "azcoin-pool"
+# Required for live block-found submission. Raw scriptPubKey hex, not an address.
+# Example shown is a standard P2PKH scriptPubKey.
+payout_script_pubkey_hex = "76a91400112233445566778899aabbccddeeff0011223388ac"
 
 [api]
 bind = "0.0.0.0"
@@ -36,3 +39,8 @@ job_source_mode = "rpc"
 # rpc_password = ""
 # Optional: Node API Bearer token (API mode only)
 # node_api_token = ""
+# RPC mode expects azcoind-compatible JSON-RPC at DAEMON__URL.
+# API mode expects the existing node API path used by this repo:
+#   GET {DAEMON__URL}/v1/az/mining/template/current
+# For end-to-end live block submission validation, prefer RPC mode unless the
+# same DAEMON__URL also serves JSON-RPC submitblock.

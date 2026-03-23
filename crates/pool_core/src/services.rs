@@ -139,7 +139,7 @@ impl InMemoryStatsSnapshot {
     }
 }
 
-/// Placeholder job source. Returns a single stub job for notify skeleton.
+/// Placeholder job source. Returns a single placeholder job for notify skeleton.
 #[derive(Default)]
 pub struct StubJobSource;
 
@@ -401,8 +401,8 @@ impl PoolServices {
         }
     }
 
-    /// Create pool services with stub job source (placeholder jobs only).
-    pub fn with_stub_job_source(pool_name: impl Into<String>) -> Self {
+    /// Create pool services with placeholder job source (placeholder jobs only).
+    pub fn with_placeholder_job_source(pool_name: impl Into<String>) -> Self {
         Self::new(pool_name, Arc::new(StubJobSource))
     }
 
@@ -411,3 +411,4 @@ impl PoolServices {
         Self::new(pool_name, Arc::new(NoJobSource))
     }
 }
+

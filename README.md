@@ -22,16 +22,32 @@ Layered Rust workspace:
 # Build
 cargo build --release -p azcoin-pool
 
-# Run (uses defaults if config.toml missing)
-cargo run -p azcoin-pool
+# Configure
+cp deploy/configs/config.example.toml config.toml
+
+# Run
+cargo run --release -p azcoin-pool
 
 # API: http://localhost:8080/health
-# Stratum: tcp://localhost:3333 (when implemented)
+# Ready: http://localhost:8080/ready
+# Stratum: tcp://localhost:3333
 ```
 
 ## Configuration
 
 Copy `deploy/configs/config.example.toml` to `config.toml`. See `.env.example` for environment variables.
+
+Important fields for real-stack validation:
+
+- `pool.payout_script_pubkey_hex`: required to arm live block-found submission
+- `daemon.job_source_mode = "rpc"`: use azcoind-compatible `getblocktemplate` + `submitblock`
+- `daemon.job_source_mode = "api"`: use the existing node API path `GET /v1/az/mining/template/current`
+- `daemon.url`: base URL for the selected daemon/node API mode
+- `daemon.rpc_user` / `daemon.rpc_password`: JSON-RPC auth for RPC mode
+- `daemon.node_api_token`: Bearer token for API mode if required
+- For end-to-end `submitblock` validation, use RPC mode unless `daemon.url` serves both the node API and JSON-RPC.
+
+At startup the pool logs whether block-found submission is armed or disabled based on `pool.payout_script_pubkey_hex`.
 
 ## Documentation
 
@@ -48,7 +64,7 @@ Copy `deploy/configs/config.example.toml` to `config.toml`. See `.env.example` f
 
 ## Status
 
-Bootstrap scaffold. Stratum listener, share processing, and block submission are stubbed. API `/health` and `/ready` work.
+Stratum V1 share handling, job sourcing, and guarded block-found submission wiring are present. API `/health` and `/ready` work.
 
 ## License
 

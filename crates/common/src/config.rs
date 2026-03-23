@@ -59,13 +59,30 @@ pub struct PoolConfig {
 pub struct PoolSection {
     #[serde(default = "default_pool_name")]
     pub name: String,
+
+    #[serde(default)]
+    pub payout_script_pubkey_hex: String,
 }
 
 impl Default for PoolSection {
     fn default() -> Self {
         Self {
             name: default_pool_name(),
+            payout_script_pubkey_hex: String::new(),
         }
+    }
+}
+
+impl PoolSection {
+    pub fn payout_script_pubkey_bytes(&self) -> Result<Option<Vec<u8>>, crate::PoolError> {
+        let hex = self.payout_script_pubkey_hex.trim();
+        if hex.is_empty() {
+            return Ok(None);
+        }
+
+        hex::decode(hex).map(Some).map_err(|e| {
+            crate::PoolError::Config(format!("invalid pool.payout_script_pubkey_hex: {}", e))
+        })
     }
 }
 
@@ -265,7 +282,10 @@ fn parse_job_source_mode(s: &str) -> Result<JobSourceMode, ()> {
 
 /// Parse config from TOML string. Used for tests.
 pub fn parse_config_toml(s: &str) -> Result<PoolConfig, crate::PoolError> {
-    toml::from_str(s).map_err(|e| crate::PoolError::Config(e.to_string()))
+    let config: PoolConfig =
+        toml::from_str(s).map_err(|e| crate::PoolError::Config(e.to_string()))?;
+    config.pool.payout_script_pubkey_bytes()?;
+    Ok(config)
 }
 
 /// Load config from file or return defaults. Environment overrides are applied after TOML.
@@ -276,6 +296,7 @@ pub fn load_config(path: Option<&str>) -> Result<PoolConfig, crate::PoolError> {
         Err(_) => PoolConfig::default(),
     };
     apply_env_overrides(&mut config);
+    config.pool.payout_script_pubkey_bytes()?;
     Ok(config)
 }
 
@@ -332,6 +353,56 @@ job_source_mode = "invalid"
         )
         .unwrap_err();
         assert!(matches!(err, crate::PoolError::Config(_)));
+    }
+
+    #[test]
+    fn test_pool_payout_script_pubkey_empty_returns_none() {
+        let config = parse_config_toml(
+            r#"
+[pool]
+name = "azcoin-pool"
+payout_script_pubkey_hex = ""
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.pool.payout_script_pubkey_bytes().unwrap(), None);
+    }
+
+    #[test]
+    fn test_pool_payout_script_pubkey_valid_hex_decodes() {
+        let config = parse_config_toml(
+            r#"
+[pool]
+name = "azcoin-pool"
+payout_script_pubkey_hex = "76a91400112233445566778899aabbccddeeff0011223388ac"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.pool.payout_script_pubkey_bytes().unwrap(),
+            Some(
+                hex::decode("76a91400112233445566778899aabbccddeeff0011223388ac").unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn test_pool_payout_script_pubkey_invalid_hex_fails() {
+        let err = parse_config_toml(
+            r#"
+[pool]
+name = "azcoin-pool"
+payout_script_pubkey_hex = "abc"
+"#,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, crate::PoolError::Config(_)));
+        assert!(err
+            .to_string()
+            .contains("invalid pool.payout_script_pubkey_hex"));
     }
 
     #[test]

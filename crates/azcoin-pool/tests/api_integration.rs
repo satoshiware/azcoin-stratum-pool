@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tower::util::ServiceExt;
 
 fn make_app() -> axum::Router {
-    let pool_services = Arc::new(PoolServices::with_stub_job_source("test-pool"));
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
     let api_state = ApiState { pool_services };
     api_router(api_state)
 }
@@ -66,7 +66,7 @@ async fn pool_stats_returns_json() {
 }
 
 #[tokio::test]
-async fn pool_jobs_current_returns_stub_job() {
+async fn pool_jobs_current_returns_placeholder_job() {
     let app = make_app();
     let response = app
         .oneshot(
@@ -121,3 +121,4 @@ async fn pool_workers_returns_empty_array() {
     let json: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
     assert!(json.is_empty());
 }
+
