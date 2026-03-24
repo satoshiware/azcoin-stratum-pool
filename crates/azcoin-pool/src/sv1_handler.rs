@@ -42,7 +42,18 @@ impl Sv1SessionHandler {
             None => vec![0u8; 4],
         };
 
-        let solved_header = build_solved_block_header(&job, share, &extranonce1);
+        let solved_header = match build_solved_block_header(&job, share, &extranonce1) {
+            Ok(header) => header,
+            Err(message) => {
+                warn!(
+                    job_id = %share.job_id,
+                    worker = %share.worker.id,
+                    error = %message,
+                    "block share found but header reconstruction failed"
+                );
+                return;
+            }
+        };
         match submit_block_candidate(
             self.block_submitter.as_ref(),
             &solved_header,

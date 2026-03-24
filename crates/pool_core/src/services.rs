@@ -297,6 +297,29 @@ impl ShareProcessor for JobAwareShareProcessor {
                     return result;
                 }
             }
+            if let Some(version_bits) = ctx.version_bits {
+                match ctx.version_rolling_mask {
+                    Some(mask) => {
+                        if version_bits & !mask != 0 {
+                            let result = ShareResult::Rejected {
+                                reason: format!(
+                                    "version_bits {:08x} outside negotiated mask {:08x}",
+                                    version_bits, mask
+                                ),
+                            };
+                            self.recent_buffer.record(&share, &result).await;
+                            return result;
+                        }
+                    }
+                    None => {
+                        let result = ShareResult::Rejected {
+                            reason: "version rolling not negotiated".to_string(),
+                        };
+                        self.recent_buffer.record(&share, &result).await;
+                        return result;
+                    }
+                }
+            }
         }
 
         let job = match self.job_registry.get_job(&share.job_id).await {

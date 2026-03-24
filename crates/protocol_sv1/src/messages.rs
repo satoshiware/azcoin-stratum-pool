@@ -25,10 +25,17 @@ pub struct Sv1Error {
 }
 
 /// Internal domain command produced by parsing SV1 requests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sv1VersionRollingConfig {
+    pub mask: u32,
+    pub min_bit_count: u32,
+}
+
 #[derive(Debug, Clone)]
 pub enum Sv1DomainCommand {
     Configure {
         extensions: Vec<String>,
+        version_rolling: Option<Sv1VersionRollingConfig>,
     },
     Subscribe,
     Authorize {
@@ -41,5 +48,6 @@ pub enum Sv1DomainCommand {
         extra_nonce2: Vec<u8>,
         ntime: u32,
         nonce: u32,
+        version_bits: Option<u32>,
     },
 }

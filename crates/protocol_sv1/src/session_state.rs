@@ -1,5 +1,6 @@
 //! Per-connection state for SV1 sessions.
 
+use crate::messages::Sv1VersionRollingConfig;
 use pool_core::WorkerIdentity;
 
 /// Session state tracked per TCP connection.
@@ -13,4 +14,6 @@ pub struct SessionState {
     pub extranonce1: String,
     /// Extranonce2 size from subscribe response.
     pub extranonce2_size: u32,
+    /// Negotiated version rolling settings from mining.configure.
+    pub version_rolling: Option<Sv1VersionRollingConfig>,
 }

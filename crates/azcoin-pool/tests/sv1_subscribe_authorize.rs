@@ -225,13 +225,17 @@ async fn sv1_configure_is_accepted_and_subscribe_authorize_still_work() {
         ]
     });
     let configure_resp = send_sv1_request(&mut stream, &configure_req).await;
+    assert_eq!(
+        configure_resp,
+        r#"{"id":1,"result":{"version-rolling":true,"version-rolling.mask":"1fffe000","version-rolling.min-bit-count":2},"error":null}"#
+    );
     let configure_json: serde_json::Value = serde_json::from_str(&configure_resp).unwrap();
     assert_eq!(
         configure_json["result"],
         serde_json::json!({
-            "version-rolling": false,
-            "version-rolling.mask": "00000000",
-            "version-rolling.min-bit-count": 0
+            "version-rolling": true,
+            "version-rolling.mask": "1fffe000",
+            "version-rolling.min-bit-count": 2
         })
     );
     assert!(configure_json.get("error").is_none() || configure_json["error"].is_null());
@@ -262,6 +266,124 @@ async fn sv1_configure_is_accepted_and_subscribe_authorize_still_work() {
 
     let notify_json: serde_json::Value = serde_json::from_str(&notify).unwrap();
     assert_eq!(notify_json["method"], "mining.notify");
+}
+
+#[tokio::test]
+async fn sv1_version_rolling_submit_with_allowed_bits_is_accepted() {
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
+    let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
+        worker_registry: Arc::clone(&pool_services.worker_registry),
+        job_source: Arc::clone(&pool_services.job_source),
+        job_registry: Arc::clone(&pool_services.job_registry),
+        share_processor: Arc::clone(&pool_services.share_processor),
+    });
+
+    let stratum_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stratum_port = stratum_listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        run_stratum_listener_accept(stratum_listener, sv1_handler)
+            .await
+            .unwrap();
+    });
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", stratum_port))
+        .await
+        .unwrap();
+    let configure_req = serde_json::json!({
+        "id": 1,
+        "method": "mining.configure",
+        "params": [
+            ["version-rolling"],
+            {
+                "version-rolling.mask": "1fffe000",
+                "version-rolling.min-bit-count": 2
+            }
+        ]
+    });
+    let configure_resp = send_sv1_request(&mut stream, &configure_req).await;
+    let configure_json: serde_json::Value = serde_json::from_str(&configure_resp).unwrap();
+    assert_eq!(configure_json["result"]["version-rolling"], true);
+
+    let subscribe_req = serde_json::json!({"id": 2, "method": "mining.subscribe", "params": []});
+    let _ = send_sv1_request(&mut stream, &subscribe_req).await;
+    let authorize_req = serde_json::json!({
+        "id": 3,
+        "method": "mining.authorize",
+        "params": ["user.worker1", "x"]
+    });
+    let _ = send_sv1_request(&mut stream, &authorize_req).await;
+    let _ = read_sv1_line(&mut stream).await;
+    let _ = read_sv1_line(&mut stream).await;
+
+    let submit_req = serde_json::json!({
+        "id": 4,
+        "method": "mining.submit",
+        "params": ["user.worker1", "0", "00000000", "00000000", "00000000", "00002000"]
+    });
+    let submit_resp = send_sv1_request(&mut stream, &submit_req).await;
+    let submit_json: serde_json::Value = serde_json::from_str(&submit_resp).unwrap();
+    assert_eq!(submit_json["result"], true);
+}
+
+#[tokio::test]
+async fn sv1_version_rolling_submit_with_disallowed_bits_is_rejected() {
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
+    let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
+        worker_registry: Arc::clone(&pool_services.worker_registry),
+        job_source: Arc::clone(&pool_services.job_source),
+        job_registry: Arc::clone(&pool_services.job_registry),
+        share_processor: Arc::clone(&pool_services.share_processor),
+    });
+
+    let stratum_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stratum_port = stratum_listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        run_stratum_listener_accept(stratum_listener, sv1_handler)
+            .await
+            .unwrap();
+    });
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", stratum_port))
+        .await
+        .unwrap();
+    let configure_req = serde_json::json!({
+        "id": 1,
+        "method": "mining.configure",
+        "params": [
+            ["version-rolling"],
+            {
+                "version-rolling.mask": "1fffe000",
+                "version-rolling.min-bit-count": 2
+            }
+        ]
+    });
+    let _ = send_sv1_request(&mut stream, &configure_req).await;
+
+    let subscribe_req = serde_json::json!({"id": 2, "method": "mining.subscribe", "params": []});
+    let _ = send_sv1_request(&mut stream, &subscribe_req).await;
+    let authorize_req = serde_json::json!({
+        "id": 3,
+        "method": "mining.authorize",
+        "params": ["user.worker1", "x"]
+    });
+    let _ = send_sv1_request(&mut stream, &authorize_req).await;
+    let _ = read_sv1_line(&mut stream).await;
+    let _ = read_sv1_line(&mut stream).await;
+
+    let submit_req = serde_json::json!({
+        "id": 4,
+        "method": "mining.submit",
+        "params": ["user.worker1", "0", "00000000", "00000000", "00000000", "20000000"]
+    });
+    let submit_resp = send_sv1_request(&mut stream, &submit_req).await;
+    let submit_json: serde_json::Value = serde_json::from_str(&submit_resp).unwrap();
+    assert!(submit_json.get("error").is_some());
+    assert!(submit_json["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("outside negotiated mask"));
 }
 
 /// Subscribed/authorized miner with live JobSource receives mining.notify built from that job.
@@ -768,6 +890,8 @@ async fn sv1_submit_malformed_extranonce1_rejected() {
         validation_context: Some(pool_core::ShareValidationContext {
             expected_extra_nonce2_len: Some(4),
             extranonce1_hex: Some("zz".to_string()),
+            version_rolling_mask: None,
+            version_bits: None,
         }),
     };
     let result = pool_services.share_processor.process_share(share).await;

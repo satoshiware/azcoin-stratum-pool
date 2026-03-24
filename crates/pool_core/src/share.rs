@@ -12,6 +12,10 @@ pub struct ShareValidationContext {
     pub expected_extra_nonce2_len: Option<usize>,
     /// Extranonce1 from session (hex). Needed for coinbase reconstruction.
     pub extranonce1_hex: Option<String>,
+    /// Negotiated version rolling mask for this session.
+    pub version_rolling_mask: Option<u32>,
+    /// Miner-selected version bits from mining.submit's optional sixth param.
+    pub version_bits: Option<u32>,
 }
 
 /// A share submitted by a miner.

@@ -36,7 +36,10 @@ impl ShareValidator for AzcoinShareValidator {
     ) -> ShareResult {
         let diff = pool_difficulty.max(1);
 
-        let header = build_solved_block_header(job, share, extranonce1);
+        let header = match build_solved_block_header(job, share, extranonce1) {
+            Ok(header) => header,
+            Err(reason) => return ShareResult::Rejected { reason },
+        };
 
         // 4. Double SHA256 of header
         let hash = double_sha256(&header);
@@ -62,7 +65,7 @@ pub fn build_solved_block_header(
     job: &Job,
     share: &ShareSubmission,
     extranonce1: &[u8],
-) -> Vec<u8> {
+) -> Result<Vec<u8>, String> {
     // 1. Reconstruct coinbase: part1 || extranonce1 || extranonce2 || part2
     let mut coinbase = Vec::with_capacity(
         job.coinbase_part1.len()
@@ -77,16 +80,37 @@ pub fn build_solved_block_header(
 
     // 2. Merkle root for single-coinbase block
     let merkle_root = double_sha256(&coinbase);
+    let version = resolved_version(job.version, share)?;
 
     // 3. Build 80-byte block header (little-endian)
-    build_block_header(
-        job.version,
+    Ok(build_block_header(
+        version,
         &job.prev_hash,
         &merkle_root,
         share.ntime,
         job.nbits,
         share.nonce,
-    )
+    ))
+}
+
+fn resolved_version(job_version: u32, share: &ShareSubmission) -> Result<u32, String> {
+    let Some(ctx) = share.validation_context.as_ref() else {
+        return Ok(job_version);
+    };
+    let Some(version_bits) = ctx.version_bits else {
+        return Ok(job_version);
+    };
+    let Some(mask) = ctx.version_rolling_mask else {
+        return Err("version rolling not negotiated".to_string());
+    };
+    if version_bits & !mask != 0 {
+        return Err(format!(
+            "version_bits {:08x} outside negotiated mask {:08x}",
+            version_bits, mask
+        ));
+    }
+
+    Ok((job_version & !mask) | (version_bits & mask))
 }
 
 /// Build 80-byte Bitcoin block header: version | prev_hash | merkle_root | ntime | nbits | nonce.
@@ -251,5 +275,48 @@ mod tests {
             ShareResult::LowDifficulty { .. } => {}
             _ => panic!("expected LowDifficulty, got {:?}", result),
         }
+    }
+
+    #[test]
+    fn test_build_solved_block_header_applies_negotiated_version_bits() {
+        let job = Job::placeholder();
+        let share = ShareSubmission {
+            job_id: "0".to_string(),
+            worker: pool_core::WorkerIdentity::new("u.w"),
+            extra_nonce2: vec![0, 0, 0, 0],
+            ntime: 0,
+            nonce: 0,
+            validation_context: Some(pool_core::ShareValidationContext {
+                expected_extra_nonce2_len: None,
+                extranonce1_hex: None,
+                version_rolling_mask: Some(0x1fffe000),
+                version_bits: Some(0x00002000),
+            }),
+        };
+
+        let header = build_solved_block_header(&job, &share, &[0, 0, 0, 0]).unwrap();
+        let version = u32::from_le_bytes(header[..4].try_into().unwrap());
+        assert_eq!(version, 0x20002000);
+    }
+
+    #[test]
+    fn test_build_solved_block_header_rejects_version_bits_outside_mask() {
+        let job = Job::placeholder();
+        let share = ShareSubmission {
+            job_id: "0".to_string(),
+            worker: pool_core::WorkerIdentity::new("u.w"),
+            extra_nonce2: vec![0, 0, 0, 0],
+            ntime: 0,
+            nonce: 0,
+            validation_context: Some(pool_core::ShareValidationContext {
+                expected_extra_nonce2_len: None,
+                extranonce1_hex: None,
+                version_rolling_mask: Some(0x1fffe000),
+                version_bits: Some(0x20000000),
+            }),
+        };
+
+        let err = build_solved_block_header(&job, &share, &[0, 0, 0, 0]).unwrap_err();
+        assert!(err.contains("outside negotiated mask"));
     }
 }

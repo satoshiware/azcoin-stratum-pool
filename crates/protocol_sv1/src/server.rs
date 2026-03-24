@@ -90,8 +90,16 @@ async fn handle_sv1_session(stream: TcpStream, handler: Arc<dyn SessionEventHand
     let mut line = String::new();
     let mut session_state = SessionState::default();
 
-    while let Ok(n) = reader.read_line(&mut line).await {
+    loop {
+        let n = match reader.read_line(&mut line).await {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(error = %e, "SV1 read error");
+                break;
+            }
+        };
         if n == 0 {
+            info!("SV1 session closed by peer");
             break;
         }
         let trimmed = line.trim().to_string();
@@ -105,48 +113,94 @@ async fn handle_sv1_session(stream: TcpStream, handler: Arc<dyn SessionEventHand
             Ok(r) => r,
             Err(e) => {
                 warn!(line = %trimmed, error = %e, "invalid SV1 JSON");
-                send_response(
-                    &mut writer,
-                    &session::build_error_response(None, -32700, "Parse error"),
-                )
-                .await;
+                let response = session::build_error_response(None, -32700, "Parse error");
+                let response_json = match serde_json::to_string(&response) {
+                    Ok(json) => json,
+                    Err(serialize_error) => {
+                        warn!(error = %serialize_error, "failed to serialize SV1 parse error response");
+                        continue;
+                    }
+                };
+                if let Err(write_error) = write_json_line(&mut writer, &response_json).await {
+                    warn!(error = %write_error, "failed to write SV1 parse error response");
+                    break;
+                }
                 continue;
             }
         };
 
         let (notify_job, response) = dispatch_request(&req, &*handler, &mut session_state).await;
+        let response_json = match serde_json::to_string(&response) {
+            Ok(json) => json,
+            Err(e) => {
+                warn!(method = %req.method, error = %e, "failed to serialize SV1 response");
+                continue;
+            }
+        };
+        let is_configure = req.method == "mining.configure";
 
         // Conventional order: response first, then set_difficulty (stub), then notify
-        send_response(&mut writer, &response).await;
+        if is_configure {
+            info!(id = ?req.id, body = %response_json, "SV1 configure response");
+        }
+        match write_json_line(&mut writer, &response_json).await {
+            Ok(()) => {
+                if is_configure {
+                    info!("SV1 configure response write succeeded");
+                }
+            }
+            Err(e) => {
+                warn!(method = %req.method, error = %e, "failed to write SV1 response");
+                break;
+            }
+        }
 
         if let Some(job) = notify_job {
             // set_difficulty stub before notify
             let set_diff = session::build_set_difficulty_notification(4);
-            if let Ok(json) = serde_json::to_string(&set_diff) {
-                let _ = writer.write_all(json.as_bytes()).await;
-                let _ = writer.write_all(b"\n").await;
+            match serde_json::to_string(&set_diff) {
+                Ok(json) => {
+                    if let Err(e) = write_json_line(&mut writer, &json).await {
+                        warn!(error = %e, "failed to write mining.set_difficulty");
+                        break;
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed to serialize mining.set_difficulty");
+                    continue;
+                }
             }
             // notify
             let notify_msg = build_mining_notify(&job);
-            if let Ok(json) = serde_json::to_string(&notify_msg) {
-                if writer.write_all(json.as_bytes()).await.is_err() {
-                    break;
+            match serde_json::to_string(&notify_msg) {
+                Ok(json) => {
+                    if let Err(e) = write_json_line(&mut writer, &json).await {
+                        warn!(error = %e, "failed to write mining.notify");
+                        break;
+                    }
                 }
-                if writer.write_all(b"\n").await.is_err() {
-                    break;
+                Err(e) => {
+                    warn!(error = %e, "failed to serialize mining.notify");
+                    continue;
                 }
             }
             // Register job when notify is actually sent
             handler.on_notify_sent(job).await;
         }
+
+        if is_configure {
+            info!("SV1 session waiting for next message after configure");
+        }
     }
 }
 
-async fn send_response(writer: &mut tokio::net::tcp::OwnedWriteHalf, response: &Sv1Response) {
-    if let Ok(json) = serde_json::to_string(response) {
-        let _ = writer.write_all(json.as_bytes()).await;
-        let _ = writer.write_all(b"\n").await;
-    }
+async fn write_json_line(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    json: &str,
+) -> std::io::Result<()> {
+    writer.write_all(json.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await
 }
 
 /// Dispatch parsed request. Returns (optional job for notify, response).
@@ -169,11 +223,27 @@ async fn dispatch_request(
     };
 
     match cmd {
-        Sv1DomainCommand::Configure { extensions } => {
-            info!(method = "mining.configure", extensions = ?extensions, "SV1 configure");
+        Sv1DomainCommand::Configure {
+            extensions,
+            version_rolling,
+        } => {
+            let negotiated_version_rolling = version_rolling
+                .as_ref()
+                .and_then(session::negotiate_version_rolling);
+            session_state.version_rolling = negotiated_version_rolling.clone();
+            info!(
+                method = "mining.configure",
+                extensions = ?extensions,
+                version_rolling = ?negotiated_version_rolling,
+                "SV1 configure"
+            );
             (
                 None,
-                session::build_configure_response(req.id.clone(), &extensions),
+                session::build_configure_response(
+                    req.id.clone(),
+                    &extensions,
+                    negotiated_version_rolling.as_ref(),
+                ),
             )
         }
         Sv1DomainCommand::Subscribe => {
@@ -209,6 +279,7 @@ async fn dispatch_request(
             extra_nonce2,
             ntime,
             nonce,
+            version_bits,
         } => {
             let worker = match &session_state.authorized_worker {
                 Some(w) => w.clone(),
@@ -227,9 +298,18 @@ async fn dispatch_request(
                     session::build_submit_reject(req.id.clone(), "username mismatch"),
                 );
             }
+            if version_bits.is_some() && session_state.version_rolling.is_none() {
+                warn!("SV1 submit rejected: version rolling not negotiated");
+                return (
+                    None,
+                    session::build_submit_reject(req.id.clone(), "version rolling not negotiated"),
+                );
+            }
             let validation_context = ShareValidationContext {
                 expected_extra_nonce2_len: Some(session_state.extranonce2_size as usize),
                 extranonce1_hex: Some(session_state.extranonce1.clone()),
+                version_rolling_mask: session_state.version_rolling.as_ref().map(|cfg| cfg.mask),
+                version_bits,
             };
             let share = ShareSubmission {
                 job_id: job_id.clone(),
