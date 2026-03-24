@@ -28,6 +28,6 @@ pub fn build_pool_services(config: &PoolConfig) -> Arc<PoolServices> {
         &config.pool.name,
         job_source,
         share_validator,
-        4,
+        config.pool.initial_difficulty,
     ))
 }

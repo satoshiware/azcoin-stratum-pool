@@ -13,6 +13,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{info, warn};
 
+const DEFAULT_INITIAL_DIFFICULTY: u32 = 1;
+
 /// Callback for session lifecycle, authorize, and submit.
 #[async_trait]
 pub trait SessionEventHandler: Send + Sync {
@@ -54,16 +56,26 @@ pub async fn run_stratum_listener(
     bind: &str,
     port: u16,
     handler: Arc<dyn SessionEventHandler>,
+    initial_difficulty: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = format!("{}:{}", bind, port);
     let listener = TcpListener::bind(&addr).await?;
-    run_stratum_listener_accept(listener, handler).await
+    run_stratum_listener_accept_with_difficulty(listener, handler, initial_difficulty).await
 }
 
 /// Run SV1 listener on an already-bound TcpListener. For tests with ephemeral ports.
 pub async fn run_stratum_listener_accept(
     listener: TcpListener,
     handler: Arc<dyn SessionEventHandler>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    run_stratum_listener_accept_with_difficulty(listener, handler, DEFAULT_INITIAL_DIFFICULTY).await
+}
+
+/// Run SV1 listener on an already-bound TcpListener with an explicit static difficulty.
+pub async fn run_stratum_listener_accept_with_difficulty(
+    listener: TcpListener,
+    handler: Arc<dyn SessionEventHandler>,
+    initial_difficulty: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = listener.local_addr()?;
     info!(addr = %addr, "Stratum V1 listener started");
@@ -76,7 +88,7 @@ pub async fn run_stratum_listener_accept(
 
         let handler_clone = Arc::clone(&handler);
         tokio::spawn(async move {
-            handle_sv1_session(stream, Arc::clone(&handler_clone)).await;
+            handle_sv1_session(stream, Arc::clone(&handler_clone), initial_difficulty).await;
             info!(peer = %peer_addr, "Stratum session disconnected");
             handler_clone.on_disconnect(peer_addr);
         });
@@ -84,7 +96,11 @@ pub async fn run_stratum_listener_accept(
 }
 
 /// Handle a single Stratum session.
-async fn handle_sv1_session(stream: TcpStream, handler: Arc<dyn SessionEventHandler>) {
+async fn handle_sv1_session(
+    stream: TcpStream,
+    handler: Arc<dyn SessionEventHandler>,
+    initial_difficulty: u32,
+) {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -157,7 +173,7 @@ async fn handle_sv1_session(stream: TcpStream, handler: Arc<dyn SessionEventHand
 
         if let Some(job) = notify_job {
             // set_difficulty stub before notify
-            let set_diff = session::build_set_difficulty_notification(4);
+            let set_diff = session::build_set_difficulty_notification(initial_difficulty);
             match serde_json::to_string(&set_diff) {
                 Ok(json) => {
                     if let Err(e) = write_json_line(&mut writer, &json).await {

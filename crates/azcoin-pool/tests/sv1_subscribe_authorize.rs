@@ -8,7 +8,9 @@ use http_body_util::BodyExt;
 use pool_core::{
     FixedJobSource, Job, JobSource, PoolServices, ShareProcessor, ShareValidator, VecJobSource,
 };
-use protocol_sv1::{run_stratum_listener_accept, SessionEventHandler};
+use protocol_sv1::{
+    run_stratum_listener_accept, run_stratum_listener_accept_with_difficulty, SessionEventHandler,
+};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::util::ServiceExt;
@@ -186,6 +188,44 @@ async fn sv1_subscribe_authorize_worker_in_api() {
     assert_eq!(shares[0]["worker_id"], "user.worker1");
     assert_eq!(shares[0]["job_id"], "0");
     assert_eq!(shares[0]["accepted"], true);
+}
+
+#[tokio::test]
+async fn sv1_configured_initial_difficulty_is_sent_in_set_difficulty() {
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
+    let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
+        worker_registry: Arc::clone(&pool_services.worker_registry),
+        job_source: Arc::clone(&pool_services.job_source),
+        job_registry: Arc::clone(&pool_services.job_registry),
+        share_processor: Arc::clone(&pool_services.share_processor),
+    });
+
+    let stratum_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stratum_port = stratum_listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        run_stratum_listener_accept_with_difficulty(stratum_listener, sv1_handler, 32)
+            .await
+            .unwrap();
+    });
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", stratum_port))
+        .await
+        .unwrap();
+    let subscribe_req = serde_json::json!({"id": 1, "method": "mining.subscribe", "params": []});
+    let _ = send_sv1_request(&mut stream, &subscribe_req).await;
+
+    let authorize_req = serde_json::json!({
+        "id": 2,
+        "method": "mining.authorize",
+        "params": ["user.worker1", "x"]
+    });
+    let _ = send_sv1_request(&mut stream, &authorize_req).await;
+    let set_diff = read_sv1_line(&mut stream).await;
+
+    let set_diff_json: serde_json::Value = serde_json::from_str(&set_diff).unwrap();
+    assert_eq!(set_diff_json["method"], "mining.set_difficulty");
+    assert_eq!(set_diff_json["params"], serde_json::json!([32]));
 }
 
 #[tokio::test]

@@ -18,6 +18,7 @@
 
 [pool]
 name = "azcoin-pool"
+initial_difficulty = 1
 # Required for live block-found submission. Raw scriptPubKey hex, not an address.
 # Example shown is a standard P2PKH scriptPubKey.
 payout_script_pubkey_hex = "76a91400112233445566778899aabbccddeeff0011223388ac"

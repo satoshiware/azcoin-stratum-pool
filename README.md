@@ -39,6 +39,7 @@ Copy `deploy/configs/config.example.toml` to `config.toml`. See `.env.example` f
 
 Important fields for real-stack validation:
 
+- `pool.initial_difficulty`: static startup difficulty used for `mining.set_difficulty` and share validation
 - `pool.payout_script_pubkey_hex`: required to arm live block-found submission
 - `daemon.job_source_mode = "rpc"`: use azcoind-compatible `getblocktemplate` + `submitblock`
 - `daemon.job_source_mode = "api"`: use the existing node API path `GET /v1/az/mining/template/current`

@@ -22,6 +22,7 @@ async fn main() -> Result<()> {
     let job_source_mode = config.daemon.job_source_mode;
     info!(
         pool = %config.pool.name,
+        initial_difficulty = config.pool.initial_difficulty,
         api = %format!("{}:{}", config.api.bind, config.api.port),
         stratum = %format!("{}:{}", config.stratum.bind, config.stratum.port),
         daemon = %config.daemon.url,
@@ -69,8 +70,11 @@ async fn main() -> Result<()> {
     // Start SV1 listener in background
     let stratum_bind = config.stratum.bind.clone();
     let stratum_port = config.stratum.port;
+    let initial_difficulty = config.pool.initial_difficulty;
     tokio::spawn(async move {
-        if let Err(e) = run_stratum_listener(&stratum_bind, stratum_port, sv1_handler).await {
+        if let Err(e) =
+            run_stratum_listener(&stratum_bind, stratum_port, sv1_handler, initial_difficulty).await
+        {
             tracing::error!(error = %e, "Stratum listener failed");
         }
     });

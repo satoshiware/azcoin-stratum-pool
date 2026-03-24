@@ -60,6 +60,9 @@ pub struct PoolSection {
     #[serde(default = "default_pool_name")]
     pub name: String,
 
+    #[serde(default = "default_pool_initial_difficulty")]
+    pub initial_difficulty: u32,
+
     #[serde(default)]
     pub payout_script_pubkey_hex: String,
 }
@@ -68,6 +71,7 @@ impl Default for PoolSection {
     fn default() -> Self {
         Self {
             name: default_pool_name(),
+            initial_difficulty: default_pool_initial_difficulty(),
             payout_script_pubkey_hex: String::new(),
         }
     }
@@ -88,6 +92,10 @@ impl PoolSection {
 
 fn default_pool_name() -> String {
     "azcoin-pool".to_string()
+}
+
+fn default_pool_initial_difficulty() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -364,6 +372,33 @@ payout_script_pubkey_hex = ""
         .unwrap();
 
         assert_eq!(config.pool.payout_script_pubkey_bytes().unwrap(), None);
+    }
+
+    #[test]
+    fn test_pool_initial_difficulty_defaults_to_one() {
+        let config = parse_config_toml(
+            r#"
+[pool]
+name = "azcoin-pool"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.pool.initial_difficulty, 1);
+    }
+
+    #[test]
+    fn test_pool_initial_difficulty_parses_from_toml() {
+        let config = parse_config_toml(
+            r#"
+[pool]
+name = "azcoin-pool"
+initial_difficulty = 32
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.pool.initial_difficulty, 32);
     }
 
     #[test]

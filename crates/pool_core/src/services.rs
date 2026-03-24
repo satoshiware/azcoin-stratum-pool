@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 const ACTIVE_JOBS_MAX: usize = 64;
+const DEFAULT_POOL_DIFFICULTY: u32 = 1;
 
 /// In-memory registry of recently issued jobs. Bounded by ACTIVE_JOBS_MAX.
 /// Jobs are registered when mining.notify is sent. Share validation checks against this.
@@ -260,7 +261,7 @@ impl JobAwareShareProcessor {
         Self {
             job_registry,
             share_validator: None,
-            pool_difficulty: 4,
+            pool_difficulty: DEFAULT_POOL_DIFFICULTY,
             recent_buffer,
         }
     }
@@ -375,7 +376,7 @@ impl PoolServices {
     /// Create pool services with a custom job source (e.g. daemon-backed).
     /// Without validator: accepts shares that pass shape and job_id checks.
     pub fn new(pool_name: impl Into<String>, job_source: Arc<dyn JobSource>) -> Self {
-        Self::new_inner(pool_name, job_source, None, 4)
+        Self::new_inner(pool_name, job_source, None, DEFAULT_POOL_DIFFICULTY)
     }
 
     /// Create pool services with coin-specific crypto validation.
