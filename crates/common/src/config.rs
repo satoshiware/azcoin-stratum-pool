@@ -233,10 +233,7 @@ pub fn apply_env_overrides(config: &mut PoolConfig) {
 }
 
 /// Apply overrides from a map. Used for testing without touching process env.
-pub fn apply_env_overrides_from(
-    config: &mut PoolConfig,
-    env: &impl Fn(&str) -> Option<String>,
-) {
+pub fn apply_env_overrides_from(config: &mut PoolConfig, env: &impl Fn(&str) -> Option<String>) {
     if let Some(v) = env(env_keys::DAEMON_JOB_SOURCE_MODE) {
         if let Ok(mode) = parse_job_source_mode(&v) {
             config.daemon.job_source_mode = mode;
@@ -382,9 +379,7 @@ payout_script_pubkey_hex = "76a91400112233445566778899aabbccddeeff0011223388ac"
 
         assert_eq!(
             config.pool.payout_script_pubkey_bytes().unwrap(),
-            Some(
-                hex::decode("76a91400112233445566778899aabbccddeeff0011223388ac").unwrap()
-            )
+            Some(hex::decode("76a91400112233445566778899aabbccddeeff0011223388ac").unwrap())
         );
     }
 

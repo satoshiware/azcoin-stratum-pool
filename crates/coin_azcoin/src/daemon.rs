@@ -139,9 +139,10 @@ impl DaemonClient {
         match result {
             serde_json::Value::Null => Ok(true),
             serde_json::Value::String(reason) if reason.trim().is_empty() => Ok(true),
-            serde_json::Value::String(reason) => {
-                Err(PoolError::Daemon(format!("submitblock rejected: {}", reason)))
-            }
+            serde_json::Value::String(reason) => Err(PoolError::Daemon(format!(
+                "submitblock rejected: {}",
+                reason
+            ))),
             other => Err(PoolError::Daemon(format!(
                 "submitblock returned unexpected result: {}",
                 other

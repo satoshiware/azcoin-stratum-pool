@@ -51,20 +51,24 @@ impl ShareValidator for AzcoinShareValidator {
             ShareResult::Accepted
         } else {
             ShareResult::LowDifficulty {
-                reason: format!(
-                    "hash above pool target (pool difficulty {})",
-                    diff
-                ),
+                reason: format!("hash above pool target (pool difficulty {})", diff),
             }
         }
     }
 }
 
 /// Reconstruct the solved 80-byte block header from a validated share path.
-pub fn build_solved_block_header(job: &Job, share: &ShareSubmission, extranonce1: &[u8]) -> Vec<u8> {
+pub fn build_solved_block_header(
+    job: &Job,
+    share: &ShareSubmission,
+    extranonce1: &[u8],
+) -> Vec<u8> {
     // 1. Reconstruct coinbase: part1 || extranonce1 || extranonce2 || part2
     let mut coinbase = Vec::with_capacity(
-        job.coinbase_part1.len() + extranonce1.len() + share.extra_nonce2.len() + job.coinbase_part2.len(),
+        job.coinbase_part1.len()
+            + extranonce1.len()
+            + share.extra_nonce2.len()
+            + job.coinbase_part2.len(),
     );
     coinbase.extend_from_slice(&job.coinbase_part1);
     coinbase.extend_from_slice(extranonce1);
@@ -214,14 +218,7 @@ mod tests {
 
     #[test]
     fn test_build_block_header_len() {
-        let h = build_block_header(
-            0x20000000,
-            &[0u8; 32],
-            &[0u8; 32],
-            0,
-            0x1d00ffff,
-            0,
-        );
+        let h = build_block_header(0x20000000, &[0u8; 32], &[0u8; 32], 0, 0x1d00ffff, 0);
         assert_eq!(h.len(), 80);
     }
 

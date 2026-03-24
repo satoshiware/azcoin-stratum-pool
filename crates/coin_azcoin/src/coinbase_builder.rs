@@ -116,10 +116,8 @@ mod tests {
         CoinbaseBuildInputs {
             height: 100,
             coinbase_value: 5_000_000_000,
-            payout_script_pubkey: hex::decode(
-                "76a91400112233445566778899aabbccddeeff0011223388ac",
-            )
-            .unwrap(),
+            payout_script_pubkey: hex::decode("76a91400112233445566778899aabbccddeeff0011223388ac")
+                .unwrap(),
             coinbase_aux_flags: None,
             default_witness_commitment: None,
         }
@@ -150,7 +148,11 @@ mod tests {
         assert_eq!(tx.output.len(), 2);
         assert_eq!(
             tx.output[1].script_pubkey.as_bytes(),
-            inputs.default_witness_commitment.as_ref().unwrap().as_slice()
+            inputs
+                .default_witness_commitment
+                .as_ref()
+                .unwrap()
+                .as_slice()
         );
         assert_eq!(tx.output[1].value.to_sat(), 0);
         assert_eq!(tx.input[0].witness.len(), 1);
@@ -163,7 +165,10 @@ mod tests {
         let tx_bytes = build_coinbase_transaction(&inputs).unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
-        assert_eq!(tx.output[0].script_pubkey.as_bytes(), inputs.payout_script_pubkey);
+        assert_eq!(
+            tx.output[0].script_pubkey.as_bytes(),
+            inputs.payout_script_pubkey
+        );
     }
 
     #[test]
@@ -177,13 +182,11 @@ mod tests {
         let tx: Transaction = deserialize(&tx_with_flags).unwrap();
 
         assert_ne!(tx_without_flags, tx_with_flags);
-        assert!(
-            tx.input[0]
-                .script_sig
-                .as_bytes()
-                .windows(4)
-                .any(|window| window == [0xde, 0xad, 0xbe, 0xef])
-        );
+        assert!(tx.input[0]
+            .script_sig
+            .as_bytes()
+            .windows(4)
+            .any(|window| window == [0xde, 0xad, 0xbe, 0xef]));
         without_flags.coinbase_aux_flags = Some(vec![0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(tx.input[0].script_sig.as_bytes()[0], 1);
         assert_eq!(tx.input[0].script_sig.as_bytes()[1], 100);

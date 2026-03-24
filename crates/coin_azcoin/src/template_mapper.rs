@@ -67,7 +67,11 @@ pub(crate) fn decode_bits(hex: &str) -> Result<u32, PoolError> {
 }
 
 fn decode_coinbase_aux_flags(template: &BlockTemplate) -> Result<Option<Vec<u8>>, PoolError> {
-    let Some(flags) = template.coinbaseaux.as_ref().and_then(|aux| aux.flags.as_ref()) else {
+    let Some(flags) = template
+        .coinbaseaux
+        .as_ref()
+        .and_then(|aux| aux.flags.as_ref())
+    else {
         return Ok(None);
     };
     let flags = flags.trim();

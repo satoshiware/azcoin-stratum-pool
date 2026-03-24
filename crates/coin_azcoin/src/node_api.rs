@@ -119,7 +119,10 @@ mod tests {
     fn test_deserialize_real_api_payload() {
         let template: NodeApiTemplate = serde_json::from_str(REAL_API_PAYLOAD).unwrap();
         assert_eq!(template.job_id, "c68fdce62b92e2d8");
-        assert_eq!(template.prev_hash, "0000000000000000c589462bc769be8b4a12fddd736d5bd5e47966e10421222b");
+        assert_eq!(
+            template.prev_hash,
+            "0000000000000000c589462bc769be8b4a12fddd736d5bd5e47966e10421222b"
+        );
         assert_eq!(template.version, 536870912);
         assert_eq!(template.nbits, "1a020e7c");
         assert_eq!(template.ntime, "69b33a70");

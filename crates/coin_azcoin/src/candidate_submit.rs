@@ -23,9 +23,7 @@ pub async fn submit_block_candidate(
     };
 
     let Some(payout_script_pubkey) = payout_script_pubkey.filter(|bytes| !bytes.is_empty()) else {
-        return CandidateSubmissionResult::LocalError(
-            "missing payout_script_pubkey".to_string(),
-        );
+        return CandidateSubmissionResult::LocalError("missing payout_script_pubkey".to_string());
     };
 
     let coinbase_tx = match build_coinbase_transaction(&CoinbaseBuildInputs {
@@ -57,7 +55,9 @@ pub async fn submit_block_candidate(
         .await
     {
         Ok(true) => CandidateSubmissionResult::Submitted,
-        Ok(false) => CandidateSubmissionResult::Rejected("block submitter returned false".to_string()),
+        Ok(false) => {
+            CandidateSubmissionResult::Rejected("block submitter returned false".to_string())
+        }
         Err(message) => {
             if let Some(reason) = message.strip_prefix("submitblock rejected: ") {
                 CandidateSubmissionResult::Rejected(reason.to_string())

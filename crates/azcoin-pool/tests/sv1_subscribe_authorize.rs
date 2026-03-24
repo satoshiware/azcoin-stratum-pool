@@ -3,8 +3,8 @@
 use api_server::{api_router, ApiState};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use http_body_util::BodyExt;
 use coin_azcoin::AzcoinShareValidator;
+use http_body_util::BodyExt;
 use pool_core::{
     FixedJobSource, Job, JobSource, PoolServices, ShareProcessor, ShareValidator, VecJobSource,
 };
@@ -188,6 +188,82 @@ async fn sv1_subscribe_authorize_worker_in_api() {
     assert_eq!(shares[0]["accepted"], true);
 }
 
+#[tokio::test]
+async fn sv1_configure_is_accepted_and_subscribe_authorize_still_work() {
+    let pool_services = Arc::new(PoolServices::with_placeholder_job_source("test-pool"));
+    let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
+        worker_registry: Arc::clone(&pool_services.worker_registry),
+        job_source: Arc::clone(&pool_services.job_source),
+        job_registry: Arc::clone(&pool_services.job_registry),
+        share_processor: Arc::clone(&pool_services.share_processor),
+    });
+
+    let stratum_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stratum_port = stratum_listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        run_stratum_listener_accept(stratum_listener, sv1_handler)
+            .await
+            .unwrap();
+    });
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", stratum_port))
+        .await
+        .unwrap();
+
+    let configure_req = serde_json::json!({
+        "id": 1,
+        "method": "mining.configure",
+        "params": [
+            ["version-rolling", "minimum-difficulty", "subscribe-extranonce"],
+            {
+                "version-rolling.mask": "1fffe000",
+                "version-rolling.min-bit-count": 2
+            }
+        ]
+    });
+    let configure_resp = send_sv1_request(&mut stream, &configure_req).await;
+    let configure_json: serde_json::Value = serde_json::from_str(&configure_resp).unwrap();
+    assert_eq!(
+        configure_json["result"],
+        serde_json::json!({
+            "version-rolling": false,
+            "minimum-difficulty": false,
+            "subscribe-extranonce": false
+        })
+    );
+    assert!(configure_json.get("error").is_none() || configure_json["error"].is_null());
+
+    let subscribe_req = serde_json::json!({
+        "id": 2,
+        "method": "mining.subscribe",
+        "params": []
+    });
+    let subscribe_resp = send_sv1_request(&mut stream, &subscribe_req).await;
+    let subscribe_json: serde_json::Value = serde_json::from_str(&subscribe_resp).unwrap();
+    assert!(subscribe_json.get("result").is_some());
+
+    let authorize_req = serde_json::json!({
+        "id": 3,
+        "method": "mining.authorize",
+        "params": ["user.worker1", "x"]
+    });
+    let authorize_resp = send_sv1_request(&mut stream, &authorize_req).await;
+    let set_diff = read_sv1_line(&mut stream).await;
+    let notify = read_sv1_line(&mut stream).await;
+
+    let authorize_json: serde_json::Value = serde_json::from_str(&authorize_resp).unwrap();
+    assert_eq!(authorize_json["result"], true);
+
+    let set_diff_json: serde_json::Value = serde_json::from_str(&set_diff).unwrap();
+    assert_eq!(set_diff_json["method"], "mining.set_difficulty");
+
+    let notify_json: serde_json::Value = serde_json::from_str(&notify).unwrap();
+    assert_eq!(notify_json["method"], "mining.notify");
+}
+
 /// Subscribed/authorized miner with live JobSource receives mining.notify built from that job.
 #[tokio::test]
 async fn sv1_live_notify_has_job_data() {
@@ -208,10 +284,7 @@ async fn sv1_live_notify_has_job_data() {
         block_assembly: None,
     };
     let job_source: Arc<dyn JobSource> = Arc::new(FixedJobSource::new(live_job));
-    let pool_services = Arc::new(PoolServices::new(
-        "test-pool",
-        job_source,
-    ));
+    let pool_services = Arc::new(PoolServices::new("test-pool", job_source));
     let sv1_handler: Arc<dyn SessionEventHandler> = Arc::new(TestSv1Handler {
         worker_registry: Arc::clone(&pool_services.worker_registry),
         job_source: Arc::clone(&pool_services.job_source),
@@ -241,7 +314,7 @@ async fn sv1_live_notify_has_job_data() {
     });
     let line1 = send_sv1_request(&mut stream, &authorize_req).await;
     let _line2 = read_sv1_line(&mut stream).await; // set_difficulty
-    let line3 = read_sv1_line(&mut stream).await;  // mining.notify
+    let line3 = read_sv1_line(&mut stream).await; // mining.notify
 
     let authorize_json: serde_json::Value = serde_json::from_str(&line1).unwrap();
     assert_eq!(authorize_json["result"], true);
@@ -835,7 +908,10 @@ async fn sv1_job_registered_when_notify_emitted() {
     });
     let submit_resp = send_sv1_request(&mut stream, &submit_req).await;
     let submit_json: serde_json::Value = serde_json::from_str(&submit_resp).unwrap();
-    assert_eq!(submit_json["result"], true, "job was registered when notify emitted");
+    assert_eq!(
+        submit_json["result"], true,
+        "job was registered when notify emitted"
+    );
 }
 
 /// Valid submit tied to known job is accepted and appears in recent shares.
@@ -1076,4 +1152,3 @@ async fn sv1_submit_no_issued_jobs_rejected() {
     assert_eq!(shares.len(), 1);
     assert_eq!(shares[0]["accepted"], false);
 }
-

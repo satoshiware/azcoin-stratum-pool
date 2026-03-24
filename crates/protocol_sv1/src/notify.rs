@@ -62,7 +62,10 @@ mod tests {
         let params = notify["params"].as_array().unwrap();
         assert_eq!(params.len(), 9);
         assert_eq!(params[0], "live-job-123");
-        assert_eq!(params[1], "ab00000000000000000000000000000000000000000000000000000000000000");
+        assert_eq!(
+            params[1],
+            "ab00000000000000000000000000000000000000000000000000000000000000"
+        );
         assert_eq!(params[2], "0102");
         assert_eq!(params[3], "fffe");
         assert_eq!(params[4], serde_json::json!([]));

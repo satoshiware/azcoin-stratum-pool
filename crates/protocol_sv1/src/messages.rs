@@ -27,6 +27,9 @@ pub struct Sv1Error {
 /// Internal domain command produced by parsing SV1 requests.
 #[derive(Debug, Clone)]
 pub enum Sv1DomainCommand {
+    Configure {
+        extensions: Vec<String>,
+    },
     Subscribe,
     Authorize {
         username: String,

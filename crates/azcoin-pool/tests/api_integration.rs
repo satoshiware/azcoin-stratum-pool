@@ -121,4 +121,3 @@ async fn pool_workers_returns_empty_array() {
     let json: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
     assert!(json.is_empty());
 }
-

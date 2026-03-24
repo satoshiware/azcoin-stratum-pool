@@ -33,9 +33,13 @@ pub fn api_template_to_job(template: &NodeApiTemplate) -> Result<Job, PoolError>
 
 /// Parse ntime hex string (e.g. "69b33a70") to u32. Block header uses little-endian.
 fn ntime_hex_to_u32(s: &str) -> Result<u32, PoolError> {
-    let bytes = hex::decode(s.trim()).map_err(|e| PoolError::Daemon(format!("ntime hex: {}", e)))?;
+    let bytes =
+        hex::decode(s.trim()).map_err(|e| PoolError::Daemon(format!("ntime hex: {}", e)))?;
     if bytes.len() != 4 {
-        return Err(PoolError::Daemon(format!("ntime length {} != 4", bytes.len())));
+        return Err(PoolError::Daemon(format!(
+            "ntime length {} != 4",
+            bytes.len()
+        )));
     }
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }

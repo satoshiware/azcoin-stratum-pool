@@ -4,8 +4,8 @@
 use anyhow::Result;
 use api_server::{api_router, ApiState};
 use azcoin_pool::sv1_handler::Sv1SessionHandler;
-use common::{init_tracing, load_config, JobSourceMode};
 use coin_azcoin::AzcoinBlockSubmitter;
+use common::{init_tracing, load_config, JobSourceMode};
 use pool_core::BlockSubmitter;
 use protocol_sv1::{run_stratum_listener, SessionEventHandler};
 use std::sync::Arc;
@@ -38,11 +38,16 @@ async fn main() -> Result<()> {
     }
 
     let pool_services = build_pool_services(&config);
-    let payout_script_pubkey = config.pool.payout_script_pubkey_bytes().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let payout_script_pubkey = config
+        .pool
+        .payout_script_pubkey_bytes()
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     if payout_script_pubkey.is_some() {
         info!("block-found submission is armed: pool payout scriptPubKey is configured");
     } else {
-        warn!("block-found submission is disabled: pool.payout_script_pubkey_hex is not configured");
+        warn!(
+            "block-found submission is disabled: pool.payout_script_pubkey_hex is not configured"
+        );
     }
     let block_submitter: Arc<dyn BlockSubmitter> = Arc::new(AzcoinBlockSubmitter::new(
         &config.daemon.url,

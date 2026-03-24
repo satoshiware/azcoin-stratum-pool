@@ -29,7 +29,10 @@ pub(crate) fn build_raw_block(
     let mut raw_block = Vec::with_capacity(
         header_bytes.len()
             + coinbase_tx_bytes.len()
-            + template_transactions.iter().map(|tx| tx.len()).sum::<usize>()
+            + template_transactions
+                .iter()
+                .map(|tx| tx.len())
+                .sum::<usize>()
             + 9,
     );
     raw_block.extend_from_slice(header_bytes);
@@ -61,10 +64,8 @@ mod tests {
         CoinbaseBuildInputs {
             height: 100,
             coinbase_value: value,
-            payout_script_pubkey: hex::decode(
-                "76a91400112233445566778899aabbccddeeff0011223388ac",
-            )
-            .unwrap(),
+            payout_script_pubkey: hex::decode("76a91400112233445566778899aabbccddeeff0011223388ac")
+                .unwrap(),
             coinbase_aux_flags: None,
             default_witness_commitment: None,
         }

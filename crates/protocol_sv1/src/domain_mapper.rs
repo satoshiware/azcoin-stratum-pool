@@ -7,6 +7,7 @@ use tracing::warn;
 /// Parse result: Ok(Some(cmd)), Ok(None) for unknown method, Err(msg) for parse error.
 pub fn map_request_to_command(req: &Sv1Request) -> Result<Option<Sv1DomainCommand>, String> {
     match req.method.as_str() {
+        "mining.configure" => map_configure_params(req).map(Some),
         "mining.subscribe" => Ok(Some(Sv1DomainCommand::Subscribe)),
         "mining.authorize" => {
             let params = req
@@ -32,6 +33,32 @@ pub fn map_request_to_command(req: &Sv1Request) -> Result<Option<Sv1DomainComman
             Ok(None)
         }
     }
+}
+
+fn map_configure_params(req: &Sv1Request) -> Result<Sv1DomainCommand, String> {
+    let extensions = match req.params.as_ref() {
+        None => Vec::new(),
+        Some(params) => {
+            let params = params
+                .as_array()
+                .ok_or("mining.configure requires params array")?;
+            match params.first() {
+                None => Vec::new(),
+                Some(value) => value
+                    .as_array()
+                    .ok_or("mining.configure param 0 (extensions) must be array")?
+                    .iter()
+                    .map(|item| {
+                        item.as_str()
+                            .map(str::to_string)
+                            .ok_or("mining.configure extensions must be strings")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            }
+        }
+    };
+
+    Ok(Sv1DomainCommand::Configure { extensions })
 }
 
 /// Parse mining.submit params into SubmitShare. Returns Err with explicit reason on failure.
@@ -97,6 +124,49 @@ fn map_submit_params(req: &Sv1Request) -> Result<Sv1DomainCommand, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_configure_valid_params() {
+        let req = Sv1Request {
+            id: Some(serde_json::json!(1)),
+            method: "mining.configure".to_string(),
+            params: Some(serde_json::json!([
+                ["version-rolling", "minimum-difficulty", "subscribe-extranonce"],
+                {
+                    "version-rolling.mask": "1fffe000",
+                    "version-rolling.min-bit-count": 2
+                }
+            ])),
+        };
+        let cmd = map_request_to_command(&req).unwrap().unwrap();
+        match cmd {
+            Sv1DomainCommand::Configure { extensions } => {
+                assert_eq!(
+                    extensions,
+                    vec![
+                        "version-rolling".to_string(),
+                        "minimum-difficulty".to_string(),
+                        "subscribe-extranonce".to_string()
+                    ]
+                );
+            }
+            _ => panic!("expected Configure"),
+        }
+    }
+
+    #[test]
+    fn test_configure_missing_params_is_tolerated() {
+        let req = Sv1Request {
+            id: Some(serde_json::json!(1)),
+            method: "mining.configure".to_string(),
+            params: None,
+        };
+        let cmd = map_request_to_command(&req).unwrap().unwrap();
+        match cmd {
+            Sv1DomainCommand::Configure { extensions } => assert!(extensions.is_empty()),
+            _ => panic!("expected Configure"),
+        }
+    }
 
     #[test]
     fn test_submit_valid_params() {

@@ -164,14 +164,18 @@ async fn dispatch_request(
             );
         }
         Err(msg) => {
-            return (
-                None,
-                session::build_submit_reject(req.id.clone(), &msg),
-            );
+            return (None, session::build_submit_reject(req.id.clone(), &msg));
         }
     };
 
     match cmd {
+        Sv1DomainCommand::Configure { extensions } => {
+            info!(method = "mining.configure", extensions = ?extensions, "SV1 configure");
+            (
+                None,
+                session::build_configure_response(req.id.clone(), &extensions),
+            )
+        }
         Sv1DomainCommand::Subscribe => {
             info!(method = "mining.subscribe", "SV1 subscribe");
             session_state.subscribed = true;

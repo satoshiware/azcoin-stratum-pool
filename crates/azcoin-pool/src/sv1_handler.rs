@@ -1,5 +1,7 @@
 use coin_azcoin::{build_solved_block_header, submit_block_candidate, CandidateSubmissionResult};
-use pool_core::{BlockSubmitter, JobSource, ShareProcessor, ShareResult, ShareSubmission, WorkerIdentity};
+use pool_core::{
+    BlockSubmitter, JobSource, ShareProcessor, ShareResult, ShareSubmission, WorkerIdentity,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{info, warn};
