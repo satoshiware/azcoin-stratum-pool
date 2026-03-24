@@ -217,7 +217,7 @@ async fn sv1_configure_is_accepted_and_subscribe_authorize_still_work() {
         "id": 1,
         "method": "mining.configure",
         "params": [
-            ["version-rolling", "minimum-difficulty", "subscribe-extranonce"],
+            ["version-rolling"],
             {
                 "version-rolling.mask": "1fffe000",
                 "version-rolling.min-bit-count": 2
@@ -230,8 +230,8 @@ async fn sv1_configure_is_accepted_and_subscribe_authorize_still_work() {
         configure_json["result"],
         serde_json::json!({
             "version-rolling": false,
-            "minimum-difficulty": false,
-            "subscribe-extranonce": false
+            "version-rolling.mask": "00000000",
+            "version-rolling.min-bit-count": 0
         })
     );
     assert!(configure_json.get("error").is_none() || configure_json["error"].is_null());

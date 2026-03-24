@@ -10,6 +10,16 @@ pub fn build_configure_response(
     let mut result = serde_json::Map::new();
     for extension in extensions {
         result.insert(extension.clone(), serde_json::json!(false));
+        if extension == "version-rolling" {
+            result.insert(
+                "version-rolling.mask".to_string(),
+                serde_json::json!("00000000"),
+            );
+            result.insert(
+                "version-rolling.min-bit-count".to_string(),
+                serde_json::json!(0),
+            );
+        }
     }
 
     Sv1Response {
@@ -100,8 +110,25 @@ mod tests {
             response.result,
             Some(serde_json::json!({
                 "version-rolling": false,
+                "version-rolling.mask": "00000000",
+                "version-rolling.min-bit-count": 0,
                 "minimum-difficulty": false,
                 "subscribe-extranonce": false
+            }))
+        );
+    }
+
+    #[test]
+    fn test_build_configure_response_version_rolling_only_includes_zero_values() {
+        let response =
+            build_configure_response(Some(serde_json::json!(1)), &["version-rolling".to_string()]);
+
+        assert_eq!(
+            response.result,
+            Some(serde_json::json!({
+                "version-rolling": false,
+                "version-rolling.mask": "00000000",
+                "version-rolling.min-bit-count": 0
             }))
         );
     }
