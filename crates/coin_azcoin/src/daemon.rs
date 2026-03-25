@@ -26,6 +26,8 @@ pub struct BlockTemplate {
     pub transactions: Vec<TransactionEntry>,
     pub coinbasevalue: u64,
     pub coinbaseaux: Option<CoinbaseAux>,
+    #[serde(rename = "default_witness_commitment")]
+    pub default_witness_commitment: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

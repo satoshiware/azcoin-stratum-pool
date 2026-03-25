@@ -1,9 +1,12 @@
 //! Maps daemon block template to pool_core::Job.
 //! TODO: AZCOIN-specific coinbase and merkle construction may need refinement.
 
+use crate::coinbase_builder::{build_coinbase_transaction, CoinbaseBuildInputs};
 use crate::daemon::BlockTemplate;
 use common::PoolError;
 use pool_core::{BlockAssemblyData, Job};
+
+const SV1_EXTRANONCE_PLACEHOLDER: [u8; 8] = [0xfa, 0xce, 0xb0, 0x0c, 0xde, 0xad, 0xbe, 0xef];
 
 /// Normalize timestamp to u32 for pool_core::Job. Same for RPC and API.
 fn ntime_to_u32(curtime: u64) -> u32 {
@@ -11,15 +14,22 @@ fn ntime_to_u32(curtime: u64) -> u32 {
 }
 
 /// Convert daemon block template to protocol-agnostic Job.
-pub fn template_to_job(template: &BlockTemplate) -> Result<Job, PoolError> {
+pub fn template_to_job(
+    template: &BlockTemplate,
+    payout_script_pubkey: &[u8],
+) -> Result<Job, PoolError> {
     let prev_hash = decode_prev_hash(&template.previousblockhash)?;
     let nbits = decode_bits(&template.bits)?;
     let merkle_branch = build_merkle_branch(template);
     let coinbase_aux_flags = decode_coinbase_aux_flags(template)?;
-
-    // TODO: AZCOIN-specific coinbase construction. Pool must build coinbase from
-    // coinbasevalue, height, extranonce, etc. For now use minimal placeholder parts.
-    let (coinbase_part1, coinbase_part2) = build_coinbase_parts(template);
+    let default_witness_commitment = decode_default_witness_commitment(template)?;
+    let template_transactions = decode_template_transactions(template)?;
+    let (coinbase_part1, coinbase_part2) = build_coinbase_parts(
+        template,
+        payout_script_pubkey,
+        coinbase_aux_flags.as_deref(),
+        default_witness_commitment.as_deref(),
+    )?;
 
     Ok(Job {
         job_id: template.height.to_string(),
@@ -35,8 +45,8 @@ pub fn template_to_job(template: &BlockTemplate) -> Result<Job, PoolError> {
             height: template.height,
             coinbase_value: template.coinbasevalue,
             coinbase_aux_flags,
-            template_transactions: Vec::new(),
-            default_witness_commitment: None,
+            template_transactions,
+            default_witness_commitment,
         }),
     })
 }
@@ -84,6 +94,32 @@ fn decode_coinbase_aux_flags(template: &BlockTemplate) -> Result<Option<Vec<u8>>
         .map_err(|e| PoolError::Daemon(format!("coinbaseaux.flags hex: {}", e)))
 }
 
+fn decode_default_witness_commitment(template: &BlockTemplate) -> Result<Option<Vec<u8>>, PoolError> {
+    let Some(commitment) = template.default_witness_commitment.as_ref() else {
+        return Ok(None);
+    };
+    let commitment = commitment.trim();
+    if commitment.is_empty() {
+        return Ok(None);
+    }
+
+    hex::decode(commitment)
+        .map(Some)
+        .map_err(|e| PoolError::Daemon(format!("default_witness_commitment hex: {}", e)))
+}
+
+fn decode_template_transactions(template: &BlockTemplate) -> Result<Vec<Vec<u8>>, PoolError> {
+    template
+        .transactions
+        .iter()
+        .enumerate()
+        .map(|(index, tx)| {
+            hex::decode(&tx.data)
+                .map_err(|e| PoolError::Daemon(format!("transaction {} data hex: {}", index, e)))
+        })
+        .collect()
+}
+
 /// Build merkle branch from transaction hashes.
 /// TODO: AZCOIN merkle format may differ. Use txid/hash from template when available.
 fn build_merkle_branch(template: &BlockTemplate) -> Vec<[u8; 32]> {
@@ -104,19 +140,46 @@ fn build_merkle_branch(template: &BlockTemplate) -> Vec<[u8; 32]> {
 }
 
 /// Build coinbase part1 (before extranonce) and part2 (after extranonce).
-/// TODO: AZCOIN-specific. Must include version, height, coinbasevalue, pool data.
-fn build_coinbase_parts(template: &BlockTemplate) -> (Vec<u8>, Vec<u8>) {
-    // Minimal placeholder: version + height in part1, coinbasevalue placeholder in part2.
-    let mut part1 = vec![0x01, 0x00, 0x00, 0x00, 0x00]; // version
-    part1.extend_from_slice(&template.height.to_le_bytes());
-    let part2 = vec![0xff, 0xff, 0xff, 0xff]; // placeholder after extranonce
-    (part1, part2)
+fn build_coinbase_parts(
+    template: &BlockTemplate,
+    payout_script_pubkey: &[u8],
+    coinbase_aux_flags: Option<&[u8]>,
+    default_witness_commitment: Option<&[u8]>,
+) -> Result<(Vec<u8>, Vec<u8>), PoolError> {
+    let mut flags_with_extranonce = coinbase_aux_flags.unwrap_or(&[]).to_vec();
+    flags_with_extranonce.extend_from_slice(&SV1_EXTRANONCE_PLACEHOLDER);
+
+    let coinbase_tx = build_coinbase_transaction(&CoinbaseBuildInputs {
+        height: template.height,
+        coinbase_value: template.coinbasevalue,
+        payout_script_pubkey: payout_script_pubkey.to_vec(),
+        coinbase_aux_flags: Some(flags_with_extranonce),
+        default_witness_commitment: default_witness_commitment.map(|commitment| commitment.to_vec()),
+    })?;
+
+    let split_at = coinbase_tx
+        .windows(SV1_EXTRANONCE_PLACEHOLDER.len())
+        .position(|window| window == SV1_EXTRANONCE_PLACEHOLDER)
+        .ok_or_else(|| {
+            PoolError::Internal("coinbase transaction missing SV1 extranonce placeholder".into())
+        })?;
+
+    Ok((
+        coinbase_tx[..split_at].to_vec(),
+        coinbase_tx[split_at + SV1_EXTRANONCE_PLACEHOLDER.len()..].to_vec(),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::daemon::{BlockTemplate, CoinbaseAux, TransactionEntry};
+    use bitcoin::consensus::deserialize;
+    use bitcoin::Transaction;
+
+    fn fixture_payout_script() -> Vec<u8> {
+        hex::decode("76a91400112233445566778899aabbccddeeff0011223388ac").unwrap()
+    }
 
     fn fixture_template() -> BlockTemplate {
         BlockTemplate {
@@ -127,19 +190,20 @@ mod tests {
             curtime: 1700000000,
             height: 100,
             transactions: vec![TransactionEntry {
-                data: "0100000001...".to_string(),
+                data: "deadbeef".to_string(),
                 txid: Some("a".repeat(64)),
                 hash: Some("b".repeat(64)),
             }],
             coinbasevalue: 5000000000,
             coinbaseaux: None,
+            default_witness_commitment: None,
         }
     }
 
     #[test]
     fn test_template_to_job_maps_fields() {
         let template = fixture_template();
-        let job = template_to_job(&template).unwrap();
+        let job = template_to_job(&template, &fixture_payout_script()).unwrap();
 
         assert_eq!(job.job_id, "100");
         assert_eq!(job.version, 0x20000000);
@@ -151,14 +215,18 @@ mod tests {
         assert_eq!(job.prev_hash[0], 0x01);
         assert_eq!(job.prev_hash[31], 0x00);
 
-        // coinbase parts include height
-        assert!(job.coinbase_part1.len() >= 5 + 8);
-        assert_eq!(job.coinbase_part2, vec![0xff, 0xff, 0xff, 0xff]);
+        assert!(!job.coinbase_part1.is_empty());
+        assert!(!job.coinbase_part2.is_empty());
+        assert_ne!(job.coinbase_part2, vec![0xff, 0xff, 0xff, 0xff]);
         assert_eq!(
             job.block_assembly
                 .as_ref()
                 .and_then(|assembly| assembly.coinbase_aux_flags.as_ref()),
             None
+        );
+        assert_eq!(
+            job.block_assembly.unwrap().template_transactions,
+            vec![hex::decode("deadbeef").unwrap()]
         );
     }
 
@@ -166,7 +234,7 @@ mod tests {
     fn test_template_to_job_empty_transactions() {
         let mut template = fixture_template();
         template.transactions.clear();
-        let job = template_to_job(&template).unwrap();
+        let job = template_to_job(&template, &fixture_payout_script()).unwrap();
         assert!(job.merkle_branch.is_empty());
     }
 
@@ -174,14 +242,14 @@ mod tests {
     fn test_template_to_job_invalid_prev_hash_fails() {
         let mut template = fixture_template();
         template.previousblockhash = "zz".to_string();
-        assert!(template_to_job(&template).is_err());
+        assert!(template_to_job(&template, &fixture_payout_script()).is_err());
     }
 
     #[test]
     fn test_template_to_job_invalid_bits_fails() {
         let mut template = fixture_template();
         template.bits = "1d00ff".to_string(); // 3 bytes, not 4
-        assert!(template_to_job(&template).is_err());
+        assert!(template_to_job(&template, &fixture_payout_script()).is_err());
     }
 
     #[test]
@@ -191,7 +259,7 @@ mod tests {
             flags: Some("deadbeef".to_string()),
         });
 
-        let job = template_to_job(&template).unwrap();
+        let job = template_to_job(&template, &fixture_payout_script()).unwrap();
 
         assert_eq!(
             job.block_assembly.unwrap().coinbase_aux_flags,
@@ -206,8 +274,35 @@ mod tests {
             flags: Some("abc".to_string()),
         });
 
-        let err = template_to_job(&template).unwrap_err();
+        let err = template_to_job(&template, &fixture_payout_script()).unwrap_err();
         assert!(matches!(err, PoolError::Daemon(_)));
         assert!(err.to_string().contains("coinbaseaux.flags hex"));
+    }
+
+    #[test]
+    fn test_template_to_job_coinbase_parts_round_trip_with_extranonce() {
+        let mut template = fixture_template();
+        template.coinbaseaux = Some(CoinbaseAux {
+            flags: Some("deadbeef".to_string()),
+        });
+        let payout_script = fixture_payout_script();
+        let job = template_to_job(&template, &payout_script).unwrap();
+        let extranonce1 = [0xaa, 0xbb, 0xcc, 0xdd];
+        let extranonce2 = [0x11, 0x22, 0x33, 0x44];
+
+        let mut coinbase = job.coinbase_part1.clone();
+        coinbase.extend_from_slice(&extranonce1);
+        coinbase.extend_from_slice(&extranonce2);
+        coinbase.extend_from_slice(&job.coinbase_part2);
+
+        let tx: Transaction = deserialize(&coinbase).unwrap();
+        let script_sig = tx.input[0].script_sig.as_bytes();
+
+        assert!(script_sig.windows(4).any(|window| window == [0xde, 0xad, 0xbe, 0xef]));
+        assert!(script_sig.windows(8).any(|window| window == [
+            0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x22, 0x33, 0x44
+        ]));
+        assert_eq!(tx.output[0].value.to_sat(), template.coinbasevalue);
+        assert_eq!(tx.output[0].script_pubkey.as_bytes(), payout_script.as_slice());
     }
 }

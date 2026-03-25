@@ -14,16 +14,20 @@ use crate::template_mapper::template_to_job;
 /// JobSource backed by AZCOIN daemon JSON-RPC getblocktemplate.
 pub struct RpcJobSource {
     daemon: Arc<DaemonClient>,
+    payout_script_pubkey: Option<Vec<u8>>,
 }
 
 impl RpcJobSource {
-    pub fn new(daemon_config: &DaemonSection) -> Self {
+    pub fn new(daemon_config: &DaemonSection, payout_script_pubkey: Option<Vec<u8>>) -> Self {
         let daemon = Arc::new(DaemonClient::new(
             daemon_config.url.clone(),
             daemon_config.rpc_user.clone(),
             daemon_config.rpc_password.clone(),
         ));
-        Self { daemon }
+        Self {
+            daemon,
+            payout_script_pubkey,
+        }
     }
 }
 
@@ -31,7 +35,13 @@ impl RpcJobSource {
 impl JobSource for RpcJobSource {
     async fn current_job(&self) -> Option<Job> {
         match self.daemon.get_block_template().await {
-            Ok(Some(template)) => match template_to_job(&template) {
+            Ok(Some(template)) => {
+                let Some(payout_script_pubkey) = self.payout_script_pubkey.as_deref() else {
+                    error!("rpc template to job mapping requires pool payout script");
+                    return None;
+                };
+
+                match template_to_job(&template, payout_script_pubkey) {
                 Ok(job) => {
                     info!(job_id = %job.job_id, height = template.height, "rpc job fetch success");
                     Some(job)
@@ -40,7 +50,8 @@ impl JobSource for RpcJobSource {
                     error!(error = %e, "rpc template to job mapping failed");
                     None
                 }
-            },
+            }
+            }
             Ok(None) => {
                 error!("rpc returned no template");
                 None

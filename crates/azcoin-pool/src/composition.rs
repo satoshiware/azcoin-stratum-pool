@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 /// Build job source from config. Used by main and tests.
 pub fn build_job_source(config: &PoolConfig) -> Arc<dyn JobSource> {
+    let payout_script_pubkey = config.pool.payout_script_pubkey_bytes().ok().flatten();
     match config.daemon.job_source_mode {
-        JobSourceMode::Rpc => Arc::new(RpcJobSource::new(&config.daemon)),
+        JobSourceMode::Rpc => Arc::new(RpcJobSource::new(&config.daemon, payout_script_pubkey)),
         JobSourceMode::Api => Arc::new(NodeApiJobSource::new(
             &config.daemon.url,
             if config.daemon.node_api_token.is_empty() {
