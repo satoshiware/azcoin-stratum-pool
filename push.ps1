@@ -1,7 +1,14 @@
 git status
 git add -A
-git commit -m "Implementing mining methods and calls into software V0.1.4-r2"
-git tag v0.1.4-r2
+git commit -m "Implementing mining methods and calls into software and fixing some bugs V0.1.4-r3"
+git tag v0.1.4-r3
 git push origin main
-git push origin v0.1.4-r2
+git push origin v0.1.4-r3
 
+docker build `
+  -t ghcr.io/satoshiware/azcoin-stratum-pool:sha-$SHA `
+  -t ghcr.io/satoshiware/azcoin-stratum-pool:latest `
+  .
+
+docker push ghcr.io/satoshiware/azcoin-stratum-pool:sha-$SHA
+docker push ghcr.io/satoshiware/azcoin-stratum-pool:latest
