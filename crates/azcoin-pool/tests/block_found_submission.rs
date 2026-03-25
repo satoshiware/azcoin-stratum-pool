@@ -190,7 +190,7 @@ async fn block_found_share_path_invokes_candidate_submission() {
     assert_eq!(submit_json["result"], true);
 
     assert_eq!(submitted.lock().unwrap().len(), 1);
-    assert_eq!(submitted.lock().unwrap()[0].len() > 80, true);
+    assert!(submitted.lock().unwrap()[0].len() > 80);
 }
 
 #[tokio::test]

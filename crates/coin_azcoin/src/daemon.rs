@@ -180,7 +180,7 @@ mod tests {
         let result = build_runtime().block_on(client.submit_block(&raw_block));
         mock.assert();
 
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[test]
@@ -239,6 +239,6 @@ mod tests {
         let result = build_runtime().block_on(client.submit_block(&raw_block));
         mock.assert();
 
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 }

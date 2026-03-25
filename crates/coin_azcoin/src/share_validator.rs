@@ -3,6 +3,7 @@
 
 use pool_core::{Job, ShareResult, ShareSubmission, ShareValidator};
 use sha2::{Digest, Sha256};
+use tracing::info;
 
 /// Pool difficulty for share target. Share target = block_target * pool_difficulty.
 const DEFAULT_POOL_DIFFICULTY: u32 = 4;
@@ -36,21 +37,38 @@ impl ShareValidator for AzcoinShareValidator {
     ) -> ShareResult {
         let diff = pool_difficulty.max(1);
 
-        let header = match build_solved_block_header(job, share, extranonce1) {
-            Ok(header) => header,
+        let trace = match build_share_validation_trace(job, share, extranonce1, diff) {
+            Ok(trace) => trace,
             Err(reason) => return ShareResult::Rejected { reason },
         };
+        info!(
+            worker = %share.worker.id,
+            job_id = %share.job_id,
+            extranonce1 = %hex::encode(extranonce1),
+            extranonce2 = %hex::encode(&share.extra_nonce2),
+            ntime = %format!("{:08x}", share.ntime),
+            nonce = %format!("{:08x}", share.nonce),
+            version_bits = ?trace.version_bits_hex,
+            version_rolling_mask = ?trace.version_rolling_mask_hex,
+            base_job_version = %format!("{:08x}", job.version),
+            merged_header_version = %format!("{:08x}", trace.merged_version),
+            prev_hash = %hex::encode(job.prev_hash),
+            merkle_branch_len = job.merkle_branch.len(),
+            merkle_branch = ?trace.merkle_branch_hex,
+            coinbase_hash = %hex::encode(trace.coinbase_hash),
+            validator_merkle_root = %hex::encode(trace.validator_merkle_root),
+            branch_merkle_root = ?trace.branch_merkle_root_hex,
+            final_header_hex = %hex::encode(&trace.header),
+            share_hash = %hex::encode(trace.hash),
+            block_target = %hex::encode(trace.block_target),
+            share_target = %hex::encode(trace.share_target),
+            target_comparison_endianness = "big-endian normalized",
+            "share validation trace"
+        );
 
-        // 4. Double SHA256 of header
-        let hash = double_sha256(&header);
-
-        // 5. Compare against targets (hash and target are big-endian 256-bit)
-        let block_target = nbits_to_target(job.nbits);
-        let share_target = mul_target_by_difficulty(&block_target, diff);
-
-        if leq_be(&hash, &block_target) {
+        if leq_be(&trace.hash, &trace.block_target) {
             ShareResult::Block
-        } else if leq_be(&hash, &share_target) {
+        } else if leq_be(&trace.hash, &trace.share_target) {
             ShareResult::Accepted
         } else {
             ShareResult::LowDifficulty {
@@ -66,7 +84,75 @@ pub fn build_solved_block_header(
     share: &ShareSubmission,
     extranonce1: &[u8],
 ) -> Result<Vec<u8>, String> {
-    // 1. Reconstruct coinbase: part1 || extranonce1 || extranonce2 || part2
+    build_share_validation_trace(job, share, extranonce1, 1).map(|trace| trace.header)
+}
+
+#[derive(Debug)]
+struct ShareValidationTrace {
+    merged_version: u32,
+    version_bits_hex: Option<String>,
+    version_rolling_mask_hex: Option<String>,
+    merkle_branch_hex: Vec<String>,
+    coinbase_hash: [u8; 32],
+    validator_merkle_root: [u8; 32],
+    branch_merkle_root_hex: Option<String>,
+    header: Vec<u8>,
+    hash: [u8; 32],
+    block_target: [u8; 32],
+    share_target: [u8; 32],
+}
+
+fn build_share_validation_trace(
+    job: &Job,
+    share: &ShareSubmission,
+    extranonce1: &[u8],
+    pool_difficulty: u32,
+) -> Result<ShareValidationTrace, String> {
+    let coinbase = build_coinbase(job, share, extranonce1);
+    let coinbase_hash = double_sha256(&coinbase);
+    let validator_merkle_root = apply_merkle_branch(coinbase_hash, &job.merkle_branch);
+    let branch_merkle_root = (!job.merkle_branch.is_empty()).then_some(validator_merkle_root);
+    let merged_version = resolved_version(job.version, share)?;
+    let header = build_block_header(
+        merged_version,
+        &job.prev_hash,
+        &validator_merkle_root,
+        share.ntime,
+        job.nbits,
+        share.nonce,
+    );
+    let hash = double_sha256(&header);
+    let block_target = nbits_to_target(job.nbits);
+    let share_target = mul_target_by_difficulty(&block_target, pool_difficulty.max(1));
+
+    Ok(ShareValidationTrace {
+        merged_version,
+        version_bits_hex: share
+            .validation_context
+            .as_ref()
+            .and_then(|ctx| ctx.version_bits)
+            .map(|bits| format!("{:08x}", bits)),
+        version_rolling_mask_hex: share
+            .validation_context
+            .as_ref()
+            .and_then(|ctx| ctx.version_rolling_mask)
+            .map(|mask| format!("{:08x}", mask)),
+        merkle_branch_hex: job
+            .merkle_branch
+            .iter()
+            .map(hex::encode)
+            .collect(),
+        coinbase_hash,
+        validator_merkle_root,
+        branch_merkle_root_hex: branch_merkle_root.map(hex::encode),
+        header,
+        hash,
+        block_target,
+        share_target,
+    })
+}
+
+fn build_coinbase(job: &Job, share: &ShareSubmission, extranonce1: &[u8]) -> Vec<u8> {
     let mut coinbase = Vec::with_capacity(
         job.coinbase_part1.len()
             + extranonce1.len()
@@ -77,20 +163,17 @@ pub fn build_solved_block_header(
     coinbase.extend_from_slice(extranonce1);
     coinbase.extend_from_slice(&share.extra_nonce2);
     coinbase.extend_from_slice(&job.coinbase_part2);
+    coinbase
+}
 
-    // 2. Merkle root for single-coinbase block
-    let merkle_root = double_sha256(&coinbase);
-    let version = resolved_version(job.version, share)?;
-
-    // 3. Build 80-byte block header (little-endian)
-    Ok(build_block_header(
-        version,
-        &job.prev_hash,
-        &merkle_root,
-        share.ntime,
-        job.nbits,
-        share.nonce,
-    ))
+fn apply_merkle_branch(mut merkle_root: [u8; 32], merkle_branch: &[[u8; 32]]) -> [u8; 32] {
+    for branch in merkle_branch {
+        let mut data = [0u8; 64];
+        data[..32].copy_from_slice(&merkle_root);
+        data[32..].copy_from_slice(branch);
+        merkle_root = double_sha256(&data);
+    }
+    merkle_root
 }
 
 fn resolved_version(job_version: u32, share: &ShareSubmission) -> Result<u32, String> {
@@ -318,5 +401,83 @@ mod tests {
 
         let err = build_solved_block_header(&job, &share, &[0, 0, 0, 0]).unwrap_err();
         assert!(err.contains("outside negotiated mask"));
+    }
+
+    #[test]
+    fn test_share_validation_trace_keeps_empty_merkle_branch_equivalent() {
+        let job = Job {
+            job_id: "trace".to_string(),
+            prev_hash: [0u8; 32],
+            coinbase_part1: vec![0x01, 0x02],
+            coinbase_part2: vec![0x03, 0x04],
+            merkle_branch: vec![],
+            version: 0x20000000,
+            nbits: 0x1d00ffff,
+            ntime: 0x01020304,
+            clean_jobs: true,
+            block_assembly: None,
+        };
+        let share = ShareSubmission {
+            job_id: "trace".to_string(),
+            worker: pool_core::WorkerIdentity::new("u.w"),
+            extra_nonce2: vec![0xbb, 0xcc],
+            ntime: 0x05060708,
+            nonce: 0x0a0b0c0d,
+            validation_context: None,
+        };
+
+        let trace = build_share_validation_trace(&job, &share, &[0xaa, 0xbb], 1).unwrap();
+        assert_eq!(trace.coinbase_hash, trace.validator_merkle_root);
+        assert_eq!(trace.branch_merkle_root_hex, None);
+    }
+
+    #[test]
+    fn test_share_validation_trace_uses_branch_applied_merkle_root() {
+        let job = Job {
+            job_id: "trace".to_string(),
+            prev_hash: [0u8; 32],
+            coinbase_part1: vec![0x01, 0x02],
+            coinbase_part2: vec![0x03, 0x04],
+            merkle_branch: vec![[0x11; 32]],
+            version: 0x20000000,
+            nbits: 0x1d00ffff,
+            ntime: 0x01020304,
+            clean_jobs: true,
+            block_assembly: None,
+        };
+        let share = ShareSubmission {
+            job_id: "trace".to_string(),
+            worker: pool_core::WorkerIdentity::new("u.w"),
+            extra_nonce2: vec![0xbb, 0xcc],
+            ntime: 0x05060708,
+            nonce: 0x0a0b0c0d,
+            validation_context: Some(pool_core::ShareValidationContext {
+                expected_extra_nonce2_len: None,
+                extranonce1_hex: Some("aabb".to_string()),
+                version_rolling_mask: Some(0x1fffe000),
+                version_bits: Some(0x00002000),
+            }),
+        };
+
+        let trace = build_share_validation_trace(&job, &share, &[0xaa, 0xbb], 1).unwrap();
+        assert_eq!(trace.merged_version, 0x20002000);
+        assert_eq!(hex::encode(&trace.header[..4]), "00200020");
+        assert_eq!(trace.version_bits_hex.as_deref(), Some("00002000"));
+        assert_eq!(trace.version_rolling_mask_hex.as_deref(), Some("1fffe000"));
+        assert_eq!(trace.merkle_branch_hex, vec!["11".repeat(32)]);
+        assert_ne!(trace.coinbase_hash, trace.validator_merkle_root);
+        let branch_merkle_root = apply_merkle_branch(trace.coinbase_hash, &job.merkle_branch);
+        assert_eq!(trace.validator_merkle_root, branch_merkle_root);
+        let validator_merkle_root_hex = hex::encode(trace.validator_merkle_root);
+        assert_eq!(
+            trace.branch_merkle_root_hex.as_deref(),
+            Some(validator_merkle_root_hex.as_str())
+        );
+        assert_eq!(
+            hex::encode(&trace.header[36..68]),
+            validator_merkle_root_hex
+        );
+        assert_eq!(trace.block_target.len(), 32);
+        assert_eq!(trace.share_target.len(), 32);
     }
 }
