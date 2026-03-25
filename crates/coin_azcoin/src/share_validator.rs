@@ -5,8 +5,9 @@ use pool_core::{Job, ShareResult, ShareSubmission, ShareValidator};
 use sha2::{Digest, Sha256};
 use tracing::info;
 
-/// Pool difficulty for share target. Share target = block_target * pool_difficulty.
+/// Pool difficulty for share target.
 const DEFAULT_POOL_DIFFICULTY: u32 = 4;
+const DIFF1_NBITS: u32 = 0x1d00ffff;
 
 /// AZCOIN share validator. Bitcoin-compatible block header hashing.
 #[derive(Default)]
@@ -123,7 +124,7 @@ fn build_share_validation_trace(
     );
     let hash = double_sha256(&header);
     let block_target = nbits_to_target(job.nbits);
-    let share_target = mul_target_by_difficulty(&block_target, pool_difficulty.max(1));
+    let share_target = div_target_by_difficulty(&diff1_target(), pool_difficulty.max(1));
 
     Ok(ShareValidationTrace {
         merged_version,
@@ -251,35 +252,27 @@ fn nbits_to_target(nbits: u32) -> [u8; 32] {
     target
 }
 
-/// Multiply target by difficulty (share target = block_target * difficulty).
-/// Bigger target = easier. Target is big-endian 256-bit.
-fn mul_target_by_difficulty(target: &[u8; 32], difficulty: u32) -> [u8; 32] {
+fn diff1_target() -> [u8; 32] {
+    nbits_to_target(DIFF1_NBITS)
+}
+
+/// Divide target by difficulty for Stratum share semantics.
+/// Bigger difficulty = smaller target = harder. Target is big-endian 256-bit.
+fn div_target_by_difficulty(target: &[u8; 32], difficulty: u32) -> [u8; 32] {
     if difficulty <= 1 {
         return *target;
     }
-    let diff = difficulty as u64;
-    let mut result = [0u8; 40]; // 32 + 8 for overflow
-    let mut carry: u64 = 0;
 
-    for i in (0..32).rev() {
-        let v = (target[i] as u64) * diff + carry;
-        result[i + 8] = v as u8;
-        carry = v >> 8;
-    }
-    for i in (0..8).rev() {
-        let v = (result[i] as u64) + carry;
-        result[i] = v as u8;
-        carry = v >> 8;
-        if carry == 0 {
-            break;
-        }
-    }
+    let divisor = difficulty as u64;
     let mut out = [0u8; 32];
-    if carry > 0 {
-        out.fill(0xff);
-    } else {
-        out.copy_from_slice(&result[8..40]);
+    let mut remainder: u64 = 0;
+
+    for (i, byte) in target.iter().enumerate() {
+        let value = (remainder << 8) | (*byte as u64);
+        out[i] = (value / divisor) as u8;
+        remainder = value % divisor;
     }
+
     out
 }
 
@@ -324,6 +317,24 @@ mod tests {
     }
 
     #[test]
+    fn test_diff1_share_target_differs_from_live_network_block_target() {
+        let block_target = nbits_to_target(0x170fffff);
+        let share_target = div_target_by_difficulty(&diff1_target(), 1);
+
+        assert_eq!(share_target, diff1_target());
+        assert_ne!(share_target, block_target);
+    }
+
+    #[test]
+    fn test_higher_pool_difficulty_produces_harder_share_target() {
+        let share_target_diff1 = div_target_by_difficulty(&diff1_target(), 1);
+        let share_target_diff32 = div_target_by_difficulty(&diff1_target(), 32);
+
+        assert_ne!(share_target_diff32, share_target_diff1);
+        assert!(leq_be(&share_target_diff32, &share_target_diff1));
+    }
+
+    #[test]
     fn test_build_block_header_len() {
         let h = build_block_header(0x20000000, &[0u8; 32], &[0u8; 32], 0, 0x1d00ffff, 0);
         assert_eq!(h.len(), 80);
@@ -358,6 +369,33 @@ mod tests {
             ShareResult::LowDifficulty { .. } => {}
             _ => panic!("expected LowDifficulty, got {:?}", result),
         }
+    }
+
+    #[test]
+    fn test_block_target_still_comes_from_job_nbits() {
+        let job = Job {
+            job_id: "trace".to_string(),
+            prev_hash: [0u8; 32],
+            coinbase_part1: vec![0x01, 0x02],
+            coinbase_part2: vec![0x03, 0x04],
+            merkle_branch: vec![],
+            version: 0x20000000,
+            nbits: 0x170fffff,
+            ntime: 0x01020304,
+            clean_jobs: true,
+            block_assembly: None,
+        };
+        let share = ShareSubmission {
+            job_id: "trace".to_string(),
+            worker: pool_core::WorkerIdentity::new("u.w"),
+            extra_nonce2: vec![0xbb, 0xcc],
+            ntime: 0x05060708,
+            nonce: 0x0a0b0c0d,
+            validation_context: None,
+        };
+
+        let trace = build_share_validation_trace(&job, &share, &[0xaa, 0xbb], 1).unwrap();
+        assert_eq!(trace.block_target, nbits_to_target(job.nbits));
     }
 
     #[test]

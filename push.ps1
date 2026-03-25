@@ -6,8 +6,8 @@ git push origin main
 git push origin v0.1.4-r3
 
 docker build `
-  -t ghcr.io/satoshiware/azcoin-stratum-pool:sha-$SHA `
-  -t ghcr.io/satoshiware/azcoin-stratum-pool:latest `
+  -f deploy/docker/Dockerfile -t ghcr.io/satoshiware/azcoin-stratum-pool:sha-$SHA `
+  -f deploy/docker/Dockerfile -t ghcr.io/satoshiware/azcoin-stratum-pool:latest `
   .
 
 docker push ghcr.io/satoshiware/azcoin-stratum-pool:sha-$SHA
