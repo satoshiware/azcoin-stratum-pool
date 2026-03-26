@@ -191,6 +191,7 @@ fn default_daemon_url() -> String {
 /// Environment variable names for overrides. Use double underscore for nested keys.
 /// Example: DAEMON__JOB_SOURCE_MODE=api overrides daemon.job_source_mode.
 pub mod env_keys {
+    pub const POOL_PAYOUT_SCRIPT_PUBKEY_HEX: &str = "POOL__PAYOUT_SCRIPT_PUBKEY_HEX";
     pub const DAEMON_JOB_SOURCE_MODE: &str = "DAEMON__JOB_SOURCE_MODE";
     pub const DAEMON_URL: &str = "DAEMON__URL";
     pub const DAEMON_RPC_USER: &str = "DAEMON__RPC_USER";
@@ -205,6 +206,9 @@ pub mod env_keys {
 /// Apply environment variable overrides to config. Env vars take precedence over TOML.
 /// Uses double-underscore convention for nested keys (e.g. DAEMON__URL -> daemon.url).
 pub fn apply_env_overrides(config: &mut PoolConfig) {
+    if let Ok(v) = std::env::var(env_keys::POOL_PAYOUT_SCRIPT_PUBKEY_HEX) {
+        config.pool.payout_script_pubkey_hex = v.trim().to_string();
+    }
     if let Ok(v) = std::env::var(env_keys::DAEMON_JOB_SOURCE_MODE) {
         if let Ok(mode) = parse_job_source_mode(&v) {
             config.daemon.job_source_mode = mode;
@@ -242,6 +246,9 @@ pub fn apply_env_overrides(config: &mut PoolConfig) {
 
 /// Apply overrides from a map. Used for testing without touching process env.
 pub fn apply_env_overrides_from(config: &mut PoolConfig, env: &impl Fn(&str) -> Option<String>) {
+    if let Some(v) = env(env_keys::POOL_PAYOUT_SCRIPT_PUBKEY_HEX) {
+        config.pool.payout_script_pubkey_hex = v.trim().to_string();
+    }
     if let Some(v) = env(env_keys::DAEMON_JOB_SOURCE_MODE) {
         if let Ok(mode) = parse_job_source_mode(&v) {
             config.daemon.job_source_mode = mode;
