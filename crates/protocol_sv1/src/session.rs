@@ -7,8 +7,16 @@ const SV1_VERSION_ROLLING_MASK: u32 = 0x1fffe000;
 pub fn negotiate_version_rolling(
     requested: &Sv1VersionRollingConfig,
 ) -> Option<Sv1VersionRollingConfig> {
-    let _ = requested;
-    None
+    let mask = SV1_VERSION_ROLLING_MASK & requested.mask;
+    if mask == 0 {
+        return None;
+    }
+
+    let available_bits = mask.count_ones();
+    Some(Sv1VersionRollingConfig {
+        mask,
+        min_bit_count: requested.min_bit_count.min(available_bits),
+    })
 }
 
 /// Configure response for requested extensions, including negotiated version-rolling when enabled.
@@ -125,9 +133,16 @@ mod tests {
         let negotiated = negotiate_version_rolling(&Sv1VersionRollingConfig {
             mask: 0xffffffff,
             min_bit_count: 2,
-        });
+        })
+        .unwrap();
 
-        assert_eq!(negotiated, None);
+        assert_eq!(
+            negotiated,
+            Sv1VersionRollingConfig {
+                mask: 0x1fffe000,
+                min_bit_count: 2,
+            }
+        );
     }
 
     #[test]
