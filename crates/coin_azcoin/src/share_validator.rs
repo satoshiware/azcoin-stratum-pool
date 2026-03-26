@@ -122,7 +122,8 @@ fn build_share_validation_trace(
         job.nbits,
         share.nonce,
     );
-    let hash = double_sha256(&header);
+    let mut hash = double_sha256(&header);
+    hash.reverse();
     let block_target = nbits_to_target(job.nbits);
     let share_target = div_target_by_difficulty(&diff1_target(), pool_difficulty.max(1));
 
