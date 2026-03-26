@@ -6,7 +6,7 @@ use serde_json::json;
 /// Build a mining.notify JSON-RPC notification from an internal Job.
 /// SV1 params: job_id, prev_hash, coinb1, coinb2, merkle_branch, version, nbits, ntime, clean_jobs.
 pub fn build_mining_notify(job: &Job) -> serde_json::Value {
-    let prev_hash_hex = hex_encode_reversed(&job.prev_hash);
+    let prev_hash_hex = hex_encode_prevhash_sv1(&job.prev_hash);
     let coinb1_hex = hex::encode(&job.coinbase_part1);
     let coinb2_hex = hex::encode(&job.coinbase_part2);
     let merkle_hex: Vec<String> = job.merkle_branch.iter().map(hex_encode_reversed).collect();
@@ -28,6 +28,14 @@ pub fn build_mining_notify(job: &Job) -> serde_json::Value {
             job.clean_jobs
         ]
     })
+}
+
+fn hex_encode_prevhash_sv1(bytes: &[u8; 32]) -> String {
+    let word_swapped: Vec<u8> = bytes
+        .chunks_exact(4)
+        .flat_map(|chunk| chunk.iter().rev().copied())
+        .collect();
+    hex::encode(word_swapped)
 }
 
 fn hex_encode_reversed(bytes: &[u8; 32]) -> String {
@@ -64,7 +72,7 @@ mod tests {
         assert_eq!(params[0], "live-job-123");
         assert_eq!(
             params[1],
-            "ab00000000000000000000000000000000000000000000000000000000000000"
+            "00000000000000000000000000000000000000000000000000000000ab000000"
         );
         assert_eq!(params[2], "0102");
         assert_eq!(params[3], "fffe");
@@ -83,5 +91,18 @@ mod tests {
         let params = notify["params"].as_array().unwrap();
         assert_eq!(params[0], "0");
         assert_eq!(params[8], true);
+    }
+
+    #[test]
+    fn test_prevhash_encodes_in_sv1_word_swapped_format() {
+        let mut prev_hash = [0u8; 32];
+        for (i, byte) in prev_hash.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+
+        assert_eq!(
+            hex_encode_prevhash_sv1(&prev_hash),
+            "03020100070605040b0a09080f0e0d0c13121110171615141b1a19181f1e1d1c"
+        );
     }
 }
