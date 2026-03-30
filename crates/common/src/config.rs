@@ -170,6 +170,10 @@ pub struct DaemonSection {
     /// Bearer token for Node API mode. Empty = no auth.
     #[serde(default)]
     pub node_api_token: String,
+
+    /// Base URL for optional share result POST sink. Empty = disabled.
+    #[serde(default)]
+    pub share_api_url: String,
 }
 
 impl Default for DaemonSection {
@@ -180,6 +184,7 @@ impl Default for DaemonSection {
             rpc_password: String::new(),
             job_source_mode: JobSourceMode::default(),
             node_api_token: String::new(),
+            share_api_url: String::new(),
         }
     }
 }
@@ -191,12 +196,14 @@ fn default_daemon_url() -> String {
 /// Environment variable names for overrides. Use double underscore for nested keys.
 /// Example: DAEMON__JOB_SOURCE_MODE=api overrides daemon.job_source_mode.
 pub mod env_keys {
+    pub const AZ_NODE_API_TOKEN: &str = "AZ_NODE_API_TOKEN";
     pub const POOL_PAYOUT_SCRIPT_PUBKEY_HEX: &str = "POOL__PAYOUT_SCRIPT_PUBKEY_HEX";
     pub const DAEMON_JOB_SOURCE_MODE: &str = "DAEMON__JOB_SOURCE_MODE";
     pub const DAEMON_URL: &str = "DAEMON__URL";
     pub const DAEMON_RPC_USER: &str = "DAEMON__RPC_USER";
     pub const DAEMON_RPC_PASSWORD: &str = "DAEMON__RPC_PASSWORD";
     pub const DAEMON_NODE_API_TOKEN: &str = "DAEMON__NODE_API_TOKEN";
+    pub const DAEMON_SHARE_API_URL: &str = "DAEMON__SHARE_API_URL";
     pub const API_BIND: &str = "API__BIND";
     pub const API_PORT: &str = "API__PORT";
     pub const STRATUM_BIND: &str = "STRATUM__BIND";
@@ -223,8 +230,14 @@ pub fn apply_env_overrides(config: &mut PoolConfig) {
     if let Ok(v) = std::env::var(env_keys::DAEMON_RPC_PASSWORD) {
         config.daemon.rpc_password = v;
     }
+    if let Ok(v) = std::env::var(env_keys::AZ_NODE_API_TOKEN) {
+        config.daemon.node_api_token = v;
+    }
     if let Ok(v) = std::env::var(env_keys::DAEMON_NODE_API_TOKEN) {
         config.daemon.node_api_token = v;
+    }
+    if let Ok(v) = std::env::var(env_keys::DAEMON_SHARE_API_URL) {
+        config.daemon.share_api_url = v.trim().to_string();
     }
     if let Ok(v) = std::env::var(env_keys::API_BIND) {
         config.api.bind = v.trim().to_string();
@@ -263,8 +276,14 @@ pub fn apply_env_overrides_from(config: &mut PoolConfig, env: &impl Fn(&str) -> 
     if let Some(v) = env(env_keys::DAEMON_RPC_PASSWORD) {
         config.daemon.rpc_password = v;
     }
+    if let Some(v) = env(env_keys::AZ_NODE_API_TOKEN) {
+        config.daemon.node_api_token = v;
+    }
     if let Some(v) = env(env_keys::DAEMON_NODE_API_TOKEN) {
         config.daemon.node_api_token = v;
+    }
+    if let Some(v) = env(env_keys::DAEMON_SHARE_API_URL) {
+        config.daemon.share_api_url = v.trim().to_string();
     }
     if let Some(v) = env(env_keys::API_BIND) {
         config.api.bind = v.trim().to_string();

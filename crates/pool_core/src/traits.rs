@@ -17,6 +17,17 @@ pub trait ShareProcessor: Send + Sync {
     async fn process_share(&self, share: ShareSubmission) -> ShareResult;
 }
 
+/// Best-effort sink for emitting share results to an external system.
+#[async_trait]
+pub trait ShareSink: Send + Sync {
+    async fn submit_share(
+        &self,
+        share: &ShareSubmission,
+        result: &ShareResult,
+        pool_difficulty: u32,
+    ) -> Result<(), String>;
+}
+
 /// Coin-specific cryptographic share validation. Reconstructs block header, hashes,
 /// and compares against target. Implemented by coin_azcoin.
 pub trait ShareValidator: Send + Sync {

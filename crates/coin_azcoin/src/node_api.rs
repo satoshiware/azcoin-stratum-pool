@@ -1,7 +1,10 @@
 //! AZCOIN node REST API client. GET /v1/az/mining/template/current for block template.
 
+use async_trait::async_trait;
+use chrono::{SecondsFormat, Utc};
 use common::PoolError;
-use serde::Deserialize;
+use pool_core::{ShareResult, ShareSink, ShareSubmission};
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 /// Node API client. Fetches template via REST GET.
@@ -23,6 +26,20 @@ pub struct NodeApiTemplate {
     pub ntime: String,
     pub clean_jobs: bool,
     pub height: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct NodeApiShareRequest {
+    ts: String,
+    worker: String,
+    job_id: String,
+    extranonce2: String,
+    ntime: String,
+    nonce: String,
+    accepted: bool,
+    duplicate: bool,
+    share_diff: u32,
+    reason: String,
 }
 
 impl NodeApiClient {
@@ -98,11 +115,79 @@ impl NodeApiClient {
         );
         Ok(Some(template))
     }
+
+    async fn post_share(&self, payload: &NodeApiShareRequest) -> Result<(), PoolError> {
+        let url = format!("{}/v1/mining/share", self.base_url);
+        let mut req = self.client.post(&url).json(payload);
+        if let Some(ref token) = self.bearer_token {
+            req = req.bearer_auth(token);
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| PoolError::Daemon(format!("node API share POST failed: {}", e)))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            warn!(url = %url, status = %status, "node API share POST returned non-2xx");
+            return Err(PoolError::Daemon(format!(
+                "node API share POST returned HTTP {}",
+                status
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+fn build_share_request(
+    share: &ShareSubmission,
+    result: &ShareResult,
+    pool_difficulty: u32,
+) -> NodeApiShareRequest {
+    NodeApiShareRequest {
+        ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        worker: share.worker.id.clone(),
+        job_id: share.job_id.clone(),
+        extranonce2: hex::encode(&share.extra_nonce2),
+        ntime: format!("{:08x}", share.ntime),
+        nonce: format!("{:08x}", share.nonce),
+        accepted: result.is_accepted(),
+        duplicate: false,
+        share_diff: pool_difficulty,
+        reason: result.reject_reason().unwrap_or_default(),
+    }
+}
+
+#[async_trait]
+impl ShareSink for NodeApiClient {
+    async fn submit_share(
+        &self,
+        share: &ShareSubmission,
+        result: &ShareResult,
+        pool_difficulty: u32,
+    ) -> Result<(), String> {
+        let payload = build_share_request(share, result, pool_difficulty);
+        self.post_share(&payload).await.map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mockito::Matcher;
+
+    fn example_share() -> ShareSubmission {
+        ShareSubmission {
+            job_id: "job-1".to_string(),
+            worker: pool_core::WorkerIdentity::new("miner.worker"),
+            extra_nonce2: vec![0xaa, 0xbb, 0xcc, 0xdd],
+            ntime: 0x69b33a70,
+            nonce: 0x01020304,
+            validation_context: None,
+        }
+    }
 
     /// Real API payload shape from AZCOIN node.
     const REAL_API_PAYLOAD: &str = r#"{
@@ -174,6 +259,77 @@ mod tests {
             .build()
             .unwrap();
         let result = rt.block_on(client.get_template_current());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_build_share_request_matches_live_contract() {
+        let share = example_share();
+
+        let accepted = build_share_request(&share, &ShareResult::Accepted, 32);
+        assert!(!accepted.ts.is_empty());
+        assert_eq!(accepted.worker, "miner.worker");
+        assert_eq!(accepted.job_id, "job-1");
+        assert_eq!(accepted.extranonce2, "aabbccdd");
+        assert_eq!(accepted.ntime, "69b33a70");
+        assert_eq!(accepted.nonce, "01020304");
+        assert!(accepted.accepted);
+        assert!(!accepted.duplicate);
+        assert_eq!(accepted.share_diff, 32);
+        assert_eq!(accepted.reason, "");
+
+        let rejected = build_share_request(
+            &share,
+            &ShareResult::Rejected {
+                reason: "low diff".to_string(),
+            },
+            32,
+        );
+        assert!(!rejected.accepted);
+        assert_eq!(rejected.reason, "low diff");
+    }
+
+    #[test]
+    fn test_post_share_uses_expected_path_and_auth() {
+        let mut server = mockito::Server::new();
+        let payload = NodeApiShareRequest {
+            ts: "2026-03-30T12:34:56.789Z".to_string(),
+            worker: "miner.worker".to_string(),
+            job_id: "job-1".to_string(),
+            extranonce2: "aabbccdd".to_string(),
+            ntime: "69b33a70".to_string(),
+            nonce: "01020304".to_string(),
+            accepted: true,
+            duplicate: false,
+            share_diff: 32,
+            reason: String::new(),
+        };
+        let mock = server
+            .mock("POST", "/v1/mining/share")
+            .match_header("authorization", "Bearer testtoken-123")
+            .match_header("content-type", Matcher::Regex("application/json".to_string()))
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "ts": "2026-03-30T12:34:56.789Z",
+                "worker": "miner.worker",
+                "job_id": "job-1",
+                "extranonce2": "aabbccdd",
+                "ntime": "69b33a70",
+                "nonce": "01020304",
+                "accepted": true,
+                "duplicate": false,
+                "share_diff": 32,
+                "reason": ""
+            })))
+            .with_status(200)
+            .create();
+
+        let client = NodeApiClient::new(server.url(), Some("testtoken-123".to_string()));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(client.post_share(&payload));
+        mock.assert();
         assert!(result.is_ok());
     }
 }

@@ -12,5 +12,5 @@ common = { path = "../common" }
 async-trait = "0.1"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "rt"] }
 tracing = "0.1"

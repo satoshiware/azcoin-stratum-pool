@@ -18,6 +18,7 @@ hex = "0.4"
 tracing = "0.1"
 reqwest = { version = "0.11", features = ["json"] }
 bitcoin = "0.32"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
 mockito = "1"
