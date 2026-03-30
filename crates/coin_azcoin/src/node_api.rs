@@ -1,7 +1,7 @@
 //! AZCOIN node REST API client. GET /v1/az/mining/template/current for block template.
 
 use async_trait::async_trait;
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use common::PoolError;
 use pool_core::{ShareResult, ShareSink, ShareSubmission};
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ pub struct NodeApiTemplate {
 
 #[derive(Debug, Serialize)]
 struct NodeApiShareRequest {
-    ts: String,
+    ts: i64,
     worker: String,
     job_id: String,
     extranonce2: String,
@@ -147,7 +147,7 @@ fn build_share_request(
     pool_difficulty: u32,
 ) -> NodeApiShareRequest {
     NodeApiShareRequest {
-        ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        ts: Utc::now().timestamp(),
         worker: share.worker.id.clone(),
         job_id: share.job_id.clone(),
         extranonce2: hex::encode(&share.extra_nonce2),
@@ -267,7 +267,7 @@ mod tests {
         let share = example_share();
 
         let accepted = build_share_request(&share, &ShareResult::Accepted, 32);
-        assert!(!accepted.ts.is_empty());
+        assert!(accepted.ts > 0);
         assert_eq!(accepted.worker, "miner.worker");
         assert_eq!(accepted.job_id, "job-1");
         assert_eq!(accepted.extranonce2, "aabbccdd");
@@ -293,7 +293,7 @@ mod tests {
     fn test_post_share_uses_expected_path_and_auth() {
         let mut server = mockito::Server::new();
         let payload = NodeApiShareRequest {
-            ts: "2026-03-30T12:34:56.789Z".to_string(),
+            ts: 1_743_339_296,
             worker: "miner.worker".to_string(),
             job_id: "job-1".to_string(),
             extranonce2: "aabbccdd".to_string(),
@@ -309,7 +309,7 @@ mod tests {
             .match_header("authorization", "Bearer testtoken-123")
             .match_header("content-type", Matcher::Regex("application/json".to_string()))
             .match_body(Matcher::PartialJson(serde_json::json!({
-                "ts": "2026-03-30T12:34:56.789Z",
+                "ts": 1_743_339_296,
                 "worker": "miner.worker",
                 "job_id": "job-1",
                 "extranonce2": "aabbccdd",
