@@ -3,7 +3,6 @@
 
 use pool_core::{Job, ShareResult, ShareSubmission, ShareValidator};
 use sha2::{Digest, Sha256};
-use tracing::info;
 
 /// Pool difficulty for share target.
 const DEFAULT_POOL_DIFFICULTY: u32 = 4;
@@ -42,31 +41,6 @@ impl ShareValidator for AzcoinShareValidator {
             Ok(trace) => trace,
             Err(reason) => return ShareResult::Rejected { reason },
         };
-        info!(
-            worker = %share.worker.id,
-            job_id = %share.job_id,
-            extranonce1 = %hex::encode(extranonce1),
-            extranonce2 = %hex::encode(&share.extra_nonce2),
-            ntime = %format!("{:08x}", share.ntime),
-            nonce = %format!("{:08x}", share.nonce),
-            version_bits = ?trace.version_bits_hex,
-            version_rolling_mask = ?trace.version_rolling_mask_hex,
-            base_job_version = %format!("{:08x}", job.version),
-            merged_header_version = %format!("{:08x}", trace.merged_version),
-            prev_hash = %hex::encode(job.prev_hash),
-            merkle_branch_len = job.merkle_branch.len(),
-            merkle_branch = ?trace.merkle_branch_hex,
-            coinbase_hash = %hex::encode(trace.coinbase_hash),
-            validator_merkle_root = %hex::encode(trace.validator_merkle_root),
-            branch_merkle_root = ?trace.branch_merkle_root_hex,
-            final_header_hex = %hex::encode(&trace.header),
-            share_hash = %hex::encode(trace.hash),
-            block_target = %hex::encode(trace.block_target),
-            share_target = %hex::encode(trace.share_target),
-            target_comparison_endianness = "big-endian normalized",
-            "share validation trace"
-        );
-
         if leq_be(&trace.hash, &trace.block_target) {
             ShareResult::Block
         } else if leq_be(&trace.hash, &trace.share_target) {
