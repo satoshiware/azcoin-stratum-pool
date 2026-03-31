@@ -1,9 +1,9 @@
 git status
 git add -A
-git commit -m "Implementing mining methods and calls into software and fixing some bugs V0.1.4-r4"
-git tag v0.1.4-r4
+git commit -m "Implementing SV2 support and starting stronger logging for miners V0.1.6"
+git tag v0.1.6
 git push origin main
-git push origin v0.1.4-r4
+git push origin v0.1.6
 
 docker build `
   -f deploy/docker/Dockerfile -t ghcr.io/satoshiware/azcoin-stratum-pool:sha-$SHA `

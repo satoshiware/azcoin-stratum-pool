@@ -3,6 +3,7 @@
 
 use pool_core::{Job, ShareResult, ShareSubmission, ShareValidator};
 use sha2::{Digest, Sha256};
+use tracing::info;
 
 /// Pool difficulty for share target.
 const DEFAULT_POOL_DIFFICULTY: u32 = 4;
@@ -41,9 +42,19 @@ impl ShareValidator for AzcoinShareValidator {
             Ok(trace) => trace,
             Err(reason) => return ShareResult::Rejected { reason },
         };
-        if leq_be(&trace.hash, &trace.block_target) {
+        let meets_block_target = leq_be(&trace.hash, &trace.block_target);
+        let meets_share_target = leq_be(&trace.hash, &trace.share_target);
+        info!(
+            share_hash = %hex::encode(trace.hash),
+            block_target = %hex::encode(trace.block_target),
+            share_target = %hex::encode(trace.share_target),
+            meets_block_target,
+            meets_share_target,
+            "share validation result"
+        );
+        if meets_block_target {
             ShareResult::Block
-        } else if leq_be(&trace.hash, &trace.share_target) {
+        } else if meets_share_target {
             ShareResult::Accepted
         } else {
             ShareResult::LowDifficulty {

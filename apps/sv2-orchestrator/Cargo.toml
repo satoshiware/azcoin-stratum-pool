@@ -1,0 +1,11 @@
+[package]
+name = "sv2-orchestrator"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sv2-orchestrator"
+path = "src/main.rs"

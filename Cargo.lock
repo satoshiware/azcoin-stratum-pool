@@ -34,7 +34,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api_server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "axum",
  "common",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "azcoin-pool"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "api_server",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "coin_azcoin"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -354,7 +354,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "hex",
@@ -1536,7 +1536,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "pool_core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "common",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "protocol_sv1"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "common",
@@ -2314,7 +2314,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "storage"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2341,6 +2341,18 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "sv2-orchestrator"
+version = "0.1.5"
+
+[[package]]
+name = "sv2_scaffold"
+version = "0.1.5"
+dependencies = [
+ "coin_azcoin",
+ "pool_core",
+]
 
 [[package]]
 name = "syn"

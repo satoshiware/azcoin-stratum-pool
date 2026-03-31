@@ -8,10 +8,12 @@ members = [
     "crates/storage",
     "crates/api_server",
     "crates/azcoin-pool",
+    "crates/sv2_scaffold",
+    "apps/sv2-orchestrator",
 ]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 authors = ["satoshiware"]
 license = "MIT"

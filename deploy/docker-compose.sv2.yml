@@ -1,0 +1,67 @@
+# SV2 pivot scaffold. Non-destructive and separate from the V1 compose stack.
+
+services:
+  azcoind:
+    image: alpine:3.20
+    command: ["sh", "-lc", "echo 'TODO: replace with AZCoin node image/config'; tail -f /dev/null"]
+    env_file:
+      - ./env/.env.sv2
+    restart: unless-stopped
+    networks:
+      - sv2-net
+
+  sv2-translator:
+    image: alpine:3.20
+    command: ["sh", "-lc", "echo 'TODO: replace with SV2 translator image'; tail -f /dev/null"]
+    env_file:
+      - ./env/.env.sv2
+    depends_on:
+      - sv2-pool
+    ports:
+      - "${SV2_TRANSLATOR_PORT:-34254}:${SV2_TRANSLATOR_PORT:-34254}"
+    restart: unless-stopped
+    networks:
+      - sv2-net
+
+  sv2-pool:
+    image: alpine:3.20
+    command: ["sh", "-lc", "echo 'TODO: replace with SV2 pool image'; tail -f /dev/null"]
+    env_file:
+      - ./env/.env.sv2
+    depends_on:
+      - azcoind
+      - sv2-jd-server
+    ports:
+      - "${SV2_POOL_PORT:-34255}:${SV2_POOL_PORT:-34255}"
+    restart: unless-stopped
+    networks:
+      - sv2-net
+
+  sv2-jd-server:
+    image: alpine:3.20
+    command: ["sh", "-lc", "echo 'TODO: future JD server placeholder'; tail -f /dev/null"]
+    env_file:
+      - ./env/.env.sv2
+    restart: unless-stopped
+    networks:
+      - sv2-net
+
+  sv2-orchestrator:
+    image: rust:1.82
+    working_dir: /workspace
+    command: ["cargo", "run", "-p", "sv2-orchestrator"]
+    env_file:
+      - ./env/.env.sv2
+    volumes:
+      - ..:/workspace
+    depends_on:
+      - sv2-translator
+      - sv2-pool
+      - sv2-jd-server
+    restart: unless-stopped
+    networks:
+      - sv2-net
+
+networks:
+  sv2-net:
+    driver: bridge

@@ -1,0 +1,14 @@
+[package]
+name = "sv2_scaffold"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+coin_azcoin = { path = "../coin_azcoin" }
+pool_core = { path = "../pool_core" }
+
+[lib]
+path = "src/lib.rs"
