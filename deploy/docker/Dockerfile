@@ -3,9 +3,10 @@ FROM rust:1-bookworm AS builder
 
 WORKDIR /app
 
-# Copy workspace files
+# Copy workspaceck ./
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY apps ./apps
 
 # Build release binary
 RUN cargo build --release -p azcoin-pool
