@@ -24,6 +24,13 @@ impl Sv1SessionHandler {
             return;
         };
 
+        info!(
+            worker = %share.worker.id,
+            job_id = %share.job_id,
+            height = job.block_assembly.as_ref().map(|b| b.height).unwrap_or_default(),
+            "preparing solved block candidate"
+        );
+
         let extranonce1 = match &share.validation_context {
             Some(ctx) => match &ctx.extranonce1_hex {
                 Some(hex) => match hex::decode(hex) {
@@ -54,6 +61,12 @@ impl Sv1SessionHandler {
                 return;
             }
         };
+        info!(
+            worker = %share.worker.id,
+            job_id = %share.job_id,
+            solved_header_len = solved_header.len(),
+            "solved block header reconstructed"
+        );
         match submit_block_candidate(
             self.block_submitter.as_ref(),
             &solved_header,
@@ -108,6 +121,11 @@ impl protocol_sv1::SessionEventHandler for Sv1SessionHandler {
     async fn on_submit(&self, share: pool_core::ShareSubmission) -> pool_core::ShareResult {
         let result = self.share_processor.process_share(share.clone()).await;
         if matches!(result, ShareResult::Block) {
+            info!(
+                worker = %share.worker.id,
+                job_id = %share.job_id,
+                "block share detected"
+            );
             self.maybe_submit_block_candidate(&share).await;
         }
         result

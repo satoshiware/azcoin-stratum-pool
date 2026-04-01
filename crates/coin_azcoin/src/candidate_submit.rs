@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use pool_core::{BlockCandidate, BlockSubmitter, Job};
+use tracing::{info, warn};
 
 use crate::coinbase_builder::{build_coinbase_transaction, CoinbaseBuildInputs};
 use crate::raw_block_builder::build_raw_block;
@@ -46,19 +47,34 @@ pub async fn submit_block_candidate(
         Err(err) => return CandidateSubmissionResult::LocalError(err.to_string()),
     };
 
-    match submitter
-        .submit_block(BlockCandidate {
-            block_hash: [0u8; 32],
-            height: block_assembly.height,
-            raw_block,
-        })
-        .await
-    {
-        Ok(true) => CandidateSubmissionResult::Submitted,
+    let candidate = BlockCandidate {
+        block_hash: [0u8; 32],
+        height: block_assembly.height,
+        raw_block,
+    };
+
+    info!(
+        height = block_assembly.height,
+        raw_block_len = candidate.raw_block.len(),
+        solved_header_len = solved_header_bytes.len(),
+        "submitblock attempt"
+    );
+
+    match submitter.submit_block(candidate).await {
+        Ok(true) => {
+            info!(height = block_assembly.height, "submitblock accepted");
+            CandidateSubmissionResult::Submitted
+        }
         Ok(false) => {
+            warn!(height = block_assembly.height, "submitblock returned false");
             CandidateSubmissionResult::Rejected("block submitter returned false".to_string())
         }
         Err(message) => {
+            warn!(
+                height = block_assembly.height,
+                error = %message,
+                "submitblock errored"
+            );
             if let Some(reason) = message.strip_prefix("submitblock rejected: ") {
                 CandidateSubmissionResult::Rejected(reason.to_string())
             } else {
