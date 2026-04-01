@@ -65,12 +65,15 @@ pub fn build_configure_response(
 }
 
 /// Subscribe response: [subscription_details, extranonce1, extranonce2_size]
-pub fn build_subscribe_response(id: Option<serde_json::Value>) -> Sv1Response {
+pub fn build_subscribe_response(
+    id: Option<serde_json::Value>,
+    extranonce1: &str,
+) -> Sv1Response {
     Sv1Response {
         id,
         result: Some(serde_json::json!([
-            [["mining.set_difficulty", "mining.notify"], "00000000", 4],
-            "00000000",
+            [["mining.set_difficulty", "mining.notify"], extranonce1, 4],
+            extranonce1,
             4
         ])),
         error: None,

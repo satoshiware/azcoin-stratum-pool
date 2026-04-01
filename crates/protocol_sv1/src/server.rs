@@ -8,12 +8,15 @@ use crate::session_state::SessionState;
 use async_trait::async_trait;
 use pool_core::{Job, ShareResult, ShareSubmission, ShareValidationContext, WorkerIdentity};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{info, warn};
 
 const DEFAULT_INITIAL_DIFFICULTY: u32 = 1;
+
+static NEXT_EXTRANONCE1: AtomicU32 = AtomicU32::new(1);
 
 /// Callback for session lifecycle, authorize, and submit.
 #[async_trait]
@@ -263,11 +266,16 @@ async fn dispatch_request(
             )
         }
         Sv1DomainCommand::Subscribe => {
-            info!(method = "mining.subscribe", "SV1 subscribe");
+            let en1 = NEXT_EXTRANONCE1.fetch_add(1, Ordering::Relaxed);
+            let en1_hex = format!("{:08x}", en1);
+            info!(method = "mining.subscribe", extranonce1 = %en1_hex, "SV1 subscribe");
             session_state.subscribed = true;
-            session_state.extranonce1 = "00000000".to_string();
+            session_state.extranonce1 = en1_hex.clone();
             session_state.extranonce2_size = 4;
-            (None, session::build_subscribe_response(req.id.clone()))
+            (
+                None,
+                session::build_subscribe_response(req.id.clone(), &en1_hex),
+            )
         }
         Sv1DomainCommand::Authorize { username, .. } => {
             match handler.on_authorize(&username).await {
