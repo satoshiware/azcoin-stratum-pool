@@ -71,7 +71,8 @@ impl Sv1SessionHandler {
             self.block_submitter.as_ref(),
             &solved_header,
             &job,
-            self.payout_script_pubkey.as_deref(),
+            &extranonce1,
+            &share.extra_nonce2,
         )
         .await
         {
