@@ -28,6 +28,16 @@ fn reconstruct_miner_coinbase(job: &Job, extranonce1: &[u8], extra_nonce2: &[u8]
     coinbase
 }
 
+/// Deserialize a non-witness coinbase and add the segwit witness nonce
+/// so the raw block contains the witness-serialized coinbase the daemon expects.
+fn restore_coinbase_witness(coinbase_no_witness: &[u8]) -> Result<Vec<u8>, String> {
+    let mut tx: bitcoin::Transaction =
+        bitcoin::consensus::deserialize(coinbase_no_witness)
+            .map_err(|e| format!("coinbase deserialize for witness: {}", e))?;
+    tx.input[0].witness = bitcoin::Witness::from(vec![vec![0u8; 32]]);
+    Ok(bitcoin::consensus::serialize(&tx))
+}
+
 pub async fn submit_block_candidate(
     submitter: &dyn BlockSubmitter,
     solved_header_bytes: &[u8],
@@ -39,7 +49,18 @@ pub async fn submit_block_candidate(
         return CandidateSubmissionResult::LocalError("missing job.block_assembly".to_string());
     };
 
-    let coinbase_tx = reconstruct_miner_coinbase(job, extranonce1, extra_nonce2);
+    let coinbase_no_witness = reconstruct_miner_coinbase(job, extranonce1, extra_nonce2);
+
+    // If the block uses segwit (has witness commitment), the raw block must
+    // contain the witness-serialized coinbase with the 32-byte witness nonce.
+    let coinbase_tx = if block_assembly.default_witness_commitment.is_some() {
+        match restore_coinbase_witness(&coinbase_no_witness) {
+            Ok(bytes) => bytes,
+            Err(e) => return CandidateSubmissionResult::LocalError(e),
+        }
+    } else {
+        coinbase_no_witness
+    };
 
     let raw_block = match build_raw_block(
         solved_header_bytes,
@@ -90,7 +111,9 @@ pub async fn submit_block_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coinbase_builder::{build_coinbase_transaction, CoinbaseBuildInputs};
+    use crate::coinbase_builder::{
+        build_coinbase_transaction, serialize_no_witness, CoinbaseBuildInputs,
+    };
     use pool_core::{BlockAssemblyData, Job};
     use std::sync::{Arc, Mutex};
 
@@ -316,5 +339,121 @@ mod tests {
             result,
             CandidateSubmissionResult::LocalError("connection refused".to_string())
         );
+    }
+
+    fn fixture_witness_commitment() -> Vec<u8> {
+        hex::decode("6a24aa21a9ed11223344556677889900aabbccddeeff00112233445566778899")
+            .unwrap()
+    }
+
+    /// Build a segwit job: coinbase_part1/part2 are NON-WITNESS bytes (matching
+    /// what template_mapper now produces), but block_assembly has a witness commitment.
+    fn fixture_job_with_segwit_coinbase_parts() -> Job {
+        let witness_commitment = fixture_witness_commitment();
+        let mut flags_with_placeholder = vec![0xde, 0xad, 0xbe, 0xef];
+        flags_with_placeholder.extend_from_slice(&EXTRANONCE_PLACEHOLDER);
+
+        let coinbase_tx_bytes = build_coinbase_transaction(&CoinbaseBuildInputs {
+            height: 200,
+            coinbase_value: 5_000_000_000,
+            payout_script_pubkey: fixture_payout_script(),
+            coinbase_aux_flags: Some(flags_with_placeholder),
+            default_witness_commitment: Some(witness_commitment.clone()),
+        })
+        .unwrap();
+
+        let coinbase_tx: bitcoin::Transaction =
+            bitcoin::consensus::deserialize(&coinbase_tx_bytes).unwrap();
+        let coinbase_no_witness = serialize_no_witness(&coinbase_tx);
+
+        let split_at = coinbase_no_witness
+            .windows(EXTRANONCE_PLACEHOLDER.len())
+            .position(|w| w == EXTRANONCE_PLACEHOLDER)
+            .expect("placeholder must appear in non-witness coinbase");
+
+        let coinbase_part1 = coinbase_no_witness[..split_at].to_vec();
+        let coinbase_part2 =
+            coinbase_no_witness[split_at + EXTRANONCE_PLACEHOLDER.len()..].to_vec();
+
+        Job {
+            job_id: "200".to_string(),
+            prev_hash: [0u8; 32],
+            coinbase_part1,
+            coinbase_part2,
+            merkle_branch: vec![],
+            version: 0x20000000,
+            nbits: 0x1d00ffff,
+            ntime: 0,
+            clean_jobs: true,
+            block_assembly: Some(BlockAssemblyData {
+                height: 200,
+                coinbase_value: 5_000_000_000,
+                coinbase_aux_flags: Some(vec![0xde, 0xad, 0xbe, 0xef]),
+                template_transactions: vec![],
+                default_witness_commitment: Some(witness_commitment),
+            }),
+        }
+    }
+
+    #[test]
+    fn test_submit_segwit_block_restores_witness_in_raw_block() {
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        let submitter = RecordingSubmitter {
+            submitted: submitted.clone(),
+            response: TestSubmitResponse::Ok,
+        };
+        let job = fixture_job_with_segwit_coinbase_parts();
+        let header = [0x33; 80];
+        let extranonce1 = [0xaa, 0xbb, 0xcc, 0xdd];
+        let extra_nonce2 = [0x11, 0x22, 0x33, 0x44];
+
+        let result = build_runtime().block_on(submit_block_candidate(
+            &submitter, &header, &job, &extranonce1, &extra_nonce2,
+        ));
+        assert_eq!(result, CandidateSubmissionResult::Submitted);
+
+        let raw_block = submitted.lock().unwrap()[0].clone();
+
+        // Reconstructed non-witness coinbase (what miners hash for txid)
+        let coinbase_no_witness = reconstruct_miner_coinbase(&job, &extranonce1, &extra_nonce2);
+        // The raw block must NOT contain the non-witness bytes verbatim,
+        // because witness restoration adds marker/flag/witness data.
+        let witness_coinbase = restore_coinbase_witness(&coinbase_no_witness).unwrap();
+        assert!(witness_coinbase.len() > coinbase_no_witness.len());
+
+        // The raw block should contain the witness-serialized coinbase
+        assert!(
+            raw_block[81..]
+                .windows(witness_coinbase.len())
+                .any(|w| w == witness_coinbase.as_slice()),
+            "raw block must contain the witness-serialized coinbase"
+        );
+
+        // Verify the witness coinbase has segwit marker at byte 4
+        assert_eq!(witness_coinbase[4], 0x00, "segwit marker");
+        assert_eq!(witness_coinbase[5], 0x01, "segwit flag");
+
+        // Verify the deserialized witness coinbase has the witness nonce
+        let tx: bitcoin::Transaction =
+            bitcoin::consensus::deserialize(&witness_coinbase).unwrap();
+        assert_eq!(tx.input[0].witness.len(), 1);
+        assert_eq!(
+            tx.input[0].witness.iter().next().unwrap(),
+            [0u8; 32]
+        );
+    }
+
+    #[test]
+    fn test_restore_coinbase_witness_adds_32_byte_nonce() {
+        let job = fixture_job_with_segwit_coinbase_parts();
+        let coinbase_no_witness = reconstruct_miner_coinbase(&job, &[0; 4], &[0; 4]);
+
+        let witness_bytes = restore_coinbase_witness(&coinbase_no_witness).unwrap();
+        let tx: bitcoin::Transaction =
+            bitcoin::consensus::deserialize(&witness_bytes).unwrap();
+
+        assert_eq!(tx.input[0].witness.len(), 1);
+        assert_eq!(tx.input[0].witness.iter().next().unwrap(), [0u8; 32]);
+        assert!(witness_bytes.len() > coinbase_no_witness.len());
     }
 }

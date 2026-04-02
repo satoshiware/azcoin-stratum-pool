@@ -1,7 +1,7 @@
 //! Maps daemon block template to pool_core::Job.
 //! TODO: AZCOIN-specific coinbase and merkle construction may need refinement.
 
-use crate::coinbase_builder::{build_coinbase_transaction, CoinbaseBuildInputs};
+use crate::coinbase_builder::{build_coinbase_transaction, serialize_no_witness, CoinbaseBuildInputs};
 use crate::daemon::BlockTemplate;
 use common::PoolError;
 use pool_core::{BlockAssemblyData, Job};
@@ -120,12 +120,12 @@ fn decode_template_transactions(template: &BlockTemplate) -> Result<Vec<Vec<u8>>
         .collect()
 }
 
-/// Build merkle branch from transaction hashes.
-/// TODO: AZCOIN merkle format may differ. Use txid/hash from template when available.
+/// Build merkle branch from transaction txids (non-witness hashes).
+/// Prefers txid over hash because the block header merkle root uses txids.
 fn build_merkle_branch(template: &BlockTemplate) -> Vec<[u8; 32]> {
     let mut branch = Vec::with_capacity(template.transactions.len());
     for tx in &template.transactions {
-        if let Some(h) = tx.hash.as_ref().or(tx.txid.as_ref()) {
+        if let Some(h) = tx.txid.as_ref().or(tx.hash.as_ref()) {
             if let Ok(b) = hex::decode(h) {
                 if b.len() == 32 {
                     let mut arr = [0u8; 32];
@@ -140,6 +140,9 @@ fn build_merkle_branch(template: &BlockTemplate) -> Vec<[u8; 32]> {
 }
 
 /// Build coinbase part1 (before extranonce) and part2 (after extranonce).
+/// Parts are the NON-WITNESS (legacy) serialization so that miners hashing
+/// part1 + extranonce1 + extranonce2 + part2 compute the txid, which is what
+/// the block header merkle root must be built from.
 fn build_coinbase_parts(
     template: &BlockTemplate,
     payout_script_pubkey: &[u8],
@@ -149,7 +152,7 @@ fn build_coinbase_parts(
     let mut flags_with_extranonce = coinbase_aux_flags.unwrap_or(&[]).to_vec();
     flags_with_extranonce.extend_from_slice(&SV1_EXTRANONCE_PLACEHOLDER);
 
-    let coinbase_tx = build_coinbase_transaction(&CoinbaseBuildInputs {
+    let coinbase_tx_bytes = build_coinbase_transaction(&CoinbaseBuildInputs {
         height: template.height,
         coinbase_value: template.coinbasevalue,
         payout_script_pubkey: payout_script_pubkey.to_vec(),
@@ -157,7 +160,13 @@ fn build_coinbase_parts(
         default_witness_commitment: default_witness_commitment.map(|commitment| commitment.to_vec()),
     })?;
 
-    let split_at = coinbase_tx
+    // Re-serialize as non-witness so miners hash the txid serialization.
+    let coinbase_tx: bitcoin::Transaction =
+        bitcoin::consensus::deserialize(&coinbase_tx_bytes)
+            .map_err(|e| PoolError::Internal(format!("coinbase deserialize: {}", e)))?;
+    let coinbase_no_witness = serialize_no_witness(&coinbase_tx);
+
+    let split_at = coinbase_no_witness
         .windows(SV1_EXTRANONCE_PLACEHOLDER.len())
         .position(|window| window == SV1_EXTRANONCE_PLACEHOLDER)
         .ok_or_else(|| {
@@ -165,8 +174,8 @@ fn build_coinbase_parts(
         })?;
 
     Ok((
-        coinbase_tx[..split_at].to_vec(),
-        coinbase_tx[split_at + SV1_EXTRANONCE_PLACEHOLDER.len()..].to_vec(),
+        coinbase_no_witness[..split_at].to_vec(),
+        coinbase_no_witness[split_at + SV1_EXTRANONCE_PLACEHOLDER.len()..].to_vec(),
     ))
 }
 
@@ -304,5 +313,46 @@ mod tests {
         ]));
         assert_eq!(tx.output[0].value.to_sat(), template.coinbasevalue);
         assert_eq!(tx.output[0].script_pubkey.as_bytes(), payout_script.as_slice());
+    }
+
+    #[test]
+    fn test_coinbase_parts_are_non_witness_when_witness_commitment_present() {
+        let mut template = fixture_template();
+        template.default_witness_commitment = Some(
+            "6a24aa21a9ed11223344556677889900aabbccddeeff00112233445566778899".to_string(),
+        );
+        let job = template_to_job(&template, &fixture_payout_script()).unwrap();
+
+        let mut coinbase = job.coinbase_part1.clone();
+        coinbase.extend_from_slice(&[0xaa; 4]); // extranonce1
+        coinbase.extend_from_slice(&[0xbb; 4]); // extranonce2
+        coinbase.extend_from_slice(&job.coinbase_part2);
+
+        // Byte 4 must be input count (0x01), not segwit marker (0x00)
+        assert_eq!(coinbase[4], 0x01, "coinbase parts must be non-witness serialization");
+
+        // Must still deserialize as a valid transaction
+        let tx: Transaction = deserialize(&coinbase).unwrap();
+        // Witness commitment output must be present in the outputs
+        assert_eq!(tx.output.len(), 2);
+        // But deserialized from non-witness, witness field is empty
+        assert!(tx.input[0].witness.is_empty());
+    }
+
+    #[test]
+    fn test_build_merkle_branch_prefers_txid_over_hash() {
+        let mut template = fixture_template();
+        template.transactions = vec![TransactionEntry {
+            data: "deadbeef".to_string(),
+            txid: Some("aa".repeat(32)),
+            hash: Some("bb".repeat(32)),
+        }];
+
+        let branch = build_merkle_branch(&template);
+        assert_eq!(branch.len(), 1);
+        // txid "aa..aa" decoded + reversed
+        let mut expected = [0xaa; 32];
+        expected.reverse();
+        assert_eq!(branch[0], expected);
     }
 }

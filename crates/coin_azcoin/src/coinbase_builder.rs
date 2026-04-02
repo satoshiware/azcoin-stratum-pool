@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use bitcoin::absolute::LockTime;
+use bitcoin::consensus::encode::Encodable;
 use bitcoin::consensus::serialize;
 use bitcoin::transaction::Version;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
@@ -53,6 +54,18 @@ pub(crate) fn build_coinbase_transaction(
     };
 
     Ok(serialize(&tx))
+}
+
+/// Serialize a Transaction in legacy (non-witness) format:
+/// version || inputs || outputs || locktime.
+/// double_sha256 of these bytes yields the txid used in the header merkle tree.
+pub(crate) fn serialize_no_witness(tx: &Transaction) -> Vec<u8> {
+    let mut buf = Vec::new();
+    tx.version.consensus_encode(&mut buf).expect("version");
+    tx.input.consensus_encode(&mut buf).expect("inputs");
+    tx.output.consensus_encode(&mut buf).expect("outputs");
+    tx.lock_time.consensus_encode(&mut buf).expect("locktime");
+    buf
 }
 
 fn build_coinbase_script_sig(height: u64, coinbase_aux_flags: Option<&[u8]>) -> Vec<u8> {
@@ -202,5 +215,34 @@ mod tests {
         assert!(err
             .to_string()
             .contains("coinbase payout script_pubkey cannot be empty"));
+    }
+
+    #[test]
+    fn test_serialize_no_witness_excludes_marker_flag_and_witness_data() {
+        let mut inputs = fixture_inputs();
+        inputs.default_witness_commitment = Some(
+            hex::decode("6a24aa21a9ed11223344556677889900aabbccddeeff00112233445566778899")
+                .unwrap(),
+        );
+
+        let witness_bytes = build_coinbase_transaction(&inputs).unwrap();
+        let tx: Transaction = deserialize(&witness_bytes).unwrap();
+        let no_witness_bytes = serialize_no_witness(&tx);
+
+        assert!(
+            witness_bytes.len() > no_witness_bytes.len(),
+            "witness serialization must be longer"
+        );
+        // Non-witness: byte 4 is input count (0x01), not segwit marker (0x00)
+        assert_eq!(no_witness_bytes[4], 0x01);
+        // Witness: byte 4 is segwit marker (0x00)
+        assert_eq!(witness_bytes[4], 0x00);
+
+        // Both deserialize to a transaction with the same outputs
+        let tx_roundtrip: Transaction = deserialize(&no_witness_bytes).unwrap();
+        assert_eq!(tx.output.len(), tx_roundtrip.output.len());
+        assert_eq!(tx.input[0].script_sig, tx_roundtrip.input[0].script_sig);
+        // Non-witness deserialization has empty witness
+        assert!(tx_roundtrip.input[0].witness.is_empty());
     }
 }
