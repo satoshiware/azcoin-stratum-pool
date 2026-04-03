@@ -197,6 +197,7 @@ fn default_daemon_url() -> String {
 /// Example: DAEMON__JOB_SOURCE_MODE=api overrides daemon.job_source_mode.
 pub mod env_keys {
     pub const AZ_NODE_API_TOKEN: &str = "AZ_NODE_API_TOKEN";
+    pub const POOL_INITIAL_DIFFICULTY: &str = "POOL__INITIAL_DIFFICULTY";
     pub const POOL_PAYOUT_SCRIPT_PUBKEY_HEX: &str = "POOL__PAYOUT_SCRIPT_PUBKEY_HEX";
     pub const DAEMON_JOB_SOURCE_MODE: &str = "DAEMON__JOB_SOURCE_MODE";
     pub const DAEMON_URL: &str = "DAEMON__URL";
@@ -213,6 +214,11 @@ pub mod env_keys {
 /// Apply environment variable overrides to config. Env vars take precedence over TOML.
 /// Uses double-underscore convention for nested keys (e.g. DAEMON__URL -> daemon.url).
 pub fn apply_env_overrides(config: &mut PoolConfig) {
+    if let Ok(v) = std::env::var(env_keys::POOL_INITIAL_DIFFICULTY) {
+        if let Ok(d) = v.trim().parse::<u32>() {
+            config.pool.initial_difficulty = d;
+        }
+    }
     if let Ok(v) = std::env::var(env_keys::POOL_PAYOUT_SCRIPT_PUBKEY_HEX) {
         config.pool.payout_script_pubkey_hex = v.trim().to_string();
     }
@@ -259,6 +265,11 @@ pub fn apply_env_overrides(config: &mut PoolConfig) {
 
 /// Apply overrides from a map. Used for testing without touching process env.
 pub fn apply_env_overrides_from(config: &mut PoolConfig, env: &impl Fn(&str) -> Option<String>) {
+    if let Some(v) = env(env_keys::POOL_INITIAL_DIFFICULTY) {
+        if let Ok(d) = v.trim().parse::<u32>() {
+            config.pool.initial_difficulty = d;
+        }
+    }
     if let Some(v) = env(env_keys::POOL_PAYOUT_SCRIPT_PUBKEY_HEX) {
         config.pool.payout_script_pubkey_hex = v.trim().to_string();
     }
@@ -411,6 +422,29 @@ name = "azcoin-pool"
         .unwrap();
 
         assert_eq!(config.pool.initial_difficulty, 1);
+    }
+
+    #[test]
+    fn test_pool_initial_difficulty_env_override() {
+        let mut config = parse_config_toml(
+            r#"
+[pool]
+name = "azcoin-pool"
+initial_difficulty = 1
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.pool.initial_difficulty, 1);
+
+        let env = |k: &str| -> Option<String> {
+            if k == env_keys::POOL_INITIAL_DIFFICULTY {
+                Some("512".to_string())
+            } else {
+                None
+            }
+        };
+        apply_env_overrides_from(&mut config, &env);
+        assert_eq!(config.pool.initial_difficulty, 512);
     }
 
     #[test]
