@@ -36,6 +36,10 @@ impl ActiveJobRegistry {
     /// Register a job. Called when mining.notify is sent.
     pub async fn register(&self, job: Job) {
         let mut inner = self.inner.write().await;
+        if job.clean_jobs {
+            inner.by_id.clear();
+            inner.order.clear();
+        }
         if inner.by_id.contains_key(&job.job_id) {
             return;
         }
@@ -564,6 +568,31 @@ mod tests {
             let recent = recent_buffer.recent().await;
             assert_eq!(recent.len(), 1);
             assert!(recent[0].accepted);
+        });
+    }
+
+    #[test]
+    fn test_register_clean_jobs_invalidates_prior_jobs() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let registry = ActiveJobRegistry::new();
+
+            let mut stale_job = Job::placeholder();
+            stale_job.job_id = "stale".to_string();
+            stale_job.clean_jobs = false;
+            registry.register(stale_job).await;
+
+            let mut fresh_job = Job::placeholder();
+            fresh_job.job_id = "fresh".to_string();
+            fresh_job.clean_jobs = true;
+            registry.register(fresh_job).await;
+
+            assert!(!registry.contains("stale").await);
+            assert!(registry.contains("fresh").await);
         });
     }
 }
