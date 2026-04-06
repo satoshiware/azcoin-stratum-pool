@@ -24,6 +24,22 @@ impl Sv1SessionHandler {
             return;
         };
 
+        if let Some(current) = self.job_source.current_job().await {
+            let solved_height = job.block_assembly.as_ref().map(|b| b.height).unwrap_or_default();
+            let current_height = current.block_assembly.as_ref().map(|b| b.height).unwrap_or_default();
+            if current.job_id != job.job_id || current_height != solved_height {
+                warn!(
+                    worker = %share.worker.id,
+                    share_job_id = %share.job_id,
+                    solved_height,
+                    current_job_id = %current.job_id,
+                    current_height,
+                    "stale block share — solved job is no longer current, skipping submitblock"
+                );
+                return;
+            }
+        }
+
         info!(
             worker = %share.worker.id,
             job_id = %share.job_id,
