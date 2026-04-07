@@ -1,5 +1,7 @@
-# AZCOIN-specific integration boundary. Daemon/RPC client, block template provider,
-# block submission, chain config, placeholder payout client. Minimal but structured.
+# AZCOIN-specific integration layer. DaemonClient (JSON-RPC), NodeApiClient (REST),
+# RpcJobSource + NodeApiJobSource, template mapping with coinbase construction,
+# AzcoinShareValidator (double-SHA256), AzcoinBlockSubmitter (submitblock RPC),
+# solved block header reconstruction and raw block serialization.
 
 [package]
 name = "coin_azcoin"

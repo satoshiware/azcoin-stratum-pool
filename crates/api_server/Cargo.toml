@@ -1,5 +1,5 @@
-# Operational API only. /health, /ready, /v1/pool/stats, /v1/pool/workers.
-# Returns stub or in-memory data where needed. Lightweight production HTTP framework.
+# Operational HTTP API (Axum). /health, /ready, /v1/pool/stats, /v1/pool/workers,
+# /v1/pool/jobs/current, /v1/pool/shares/recent. Backed by pool_core services.
 
 [package]
 name = "api_server"

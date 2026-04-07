@@ -1,6 +1,7 @@
-# Protocol-agnostic mining pool domain logic. Worker/session, job, share, round, stats abstractions.
-# Defines domain models and traits—business logic implementations live in other crates.
-# This crate has no dependency on Stratum V1 or V2; protocol adapters depend on it.
+# Protocol-agnostic mining pool domain logic. Job, ShareSubmission, ShareResult, WorkerIdentity.
+# ActiveJobRegistry (bounded job cache with clean_jobs invalidation), JobAwareShareProcessor,
+# InMemoryWorkerRegistry, InMemoryStatsSnapshot. Traits: JobSource, ShareProcessor,
+# ShareValidator, BlockSubmitter, ShareSink. No wire protocol dependency.
 
 [package]
 name = "pool_core"

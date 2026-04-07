@@ -1,5 +1,12 @@
 //! Protocol-agnostic mining pool domain logic.
-//! Domain models and traits—business logic lives in other crates.
+//!
+//! Core domain models: `Job`, `ShareSubmission`, `ShareResult`, `WorkerIdentity`, `PoolStats`.
+//! Core services: `ActiveJobRegistry` (bounded job cache with `clean_jobs` invalidation),
+//! `JobAwareShareProcessor` (validates shares against registered jobs with optional crypto
+//! validation), `InMemoryWorkerRegistry`, `InMemoryStatsSnapshot`.
+//! Traits: `JobSource`, `ShareProcessor`, `ShareValidator`, `BlockSubmitter`, `ShareSink`.
+//!
+//! This crate has no dependency on any wire protocol. Protocol adapters depend on it.
 
 pub mod balance;
 pub mod block;

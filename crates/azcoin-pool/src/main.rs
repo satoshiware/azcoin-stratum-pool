@@ -1,5 +1,8 @@
 //! AZCOIN mining pool main binary.
+//!
 //! Bootstrap: load config, init logging, construct services, start API + SV1 listener.
+//! Spawns a background job poller that polls the daemon for new block templates every
+//! 5 seconds and broadcasts changes to all connected SV1 sessions via `tokio::broadcast`.
 
 use anyhow::Result;
 use api_server::{api_router, ApiState};

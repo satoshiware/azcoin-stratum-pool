@@ -1,5 +1,17 @@
-//! AZCOIN-specific integration. Daemon/RPC, block template, block submission, chain config.
-//! Placeholder payout client. Minimal but structured for future expansion.
+//! AZCOIN-specific integration layer.
+//!
+//! Daemon connectivity: `DaemonClient` (JSON-RPC for `getblocktemplate` + `submitblock`),
+//! `NodeApiClient` (REST API for templates and share reporting).
+//!
+//! Job sourcing: `RpcJobSource` and `NodeApiJobSource` implement `pool_core::JobSource`.
+//! Template mapping: converts daemon templates to `Job` with coinbase construction,
+//! merkle branch computation, and block assembly data preservation.
+//!
+//! Share validation: `AzcoinShareValidator` reconstructs block headers and verifies
+//! double-SHA256 hash against pool difficulty target.
+//!
+//! Block submission: `AzcoinBlockSubmitter` implements `BlockSubmitter`. Full pipeline
+//! from solved header reconstruction through raw block serialization to `submitblock` RPC.
 
 pub mod api_template_mapper;
 pub mod block_submit;

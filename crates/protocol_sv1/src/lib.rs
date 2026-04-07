@@ -1,6 +1,14 @@
-//! Stratum V1 wire protocol. Listener, session, message types, parsing, domain mapping.
+//! Stratum V1 wire protocol. TCP listener, JSON-RPC parsing, session state, domain mapping.
+//!
+//! Handles the full SV1 lifecycle: `mining.configure` (version-rolling), `mining.subscribe`,
+//! `mining.authorize`, `mining.notify`, `mining.set_difficulty`, and `mining.submit`.
+//!
+//! Session loop uses `tokio::select!` to handle both miner requests and server-push job
+//! updates via `tokio::sync::broadcast`. Each session receives fresh `mining.notify` messages
+//! whenever the background job poller detects a new block template.
+//!
 //! Does NOT own balances, payouts, or rounds. Maps SV1 requests into pool_core domain commands.
-//! TODO: SV2 adapter will be added via protocol adapter layer—this crate stays SV1-focused.
+//! SV2 support will be added via a separate protocol adapter crate.
 
 pub mod domain_mapper;
 pub mod messages;
