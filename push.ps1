@@ -1,9 +1,9 @@
 git status
 git add -A
-git commit -m "Fixing issues invalid merkle branch and not being able to successfully submit a block V0.1.6-r2"
-git tag v0.1.6-r3
+git commit -m "Fixing issues invalid merkle branch and not being able to successfully submit a block V0.1.6-r4"
+git tag v0.1.6-r4
 git push origin main
-git push origin v0.1.6-r3
+git push origin v0.1.6-r4
 
 docker build `
   -f deploy/docker/Dockerfile -t ghcr.io/satoshiware/azcoin-stratum-pool:sha-$SHA `

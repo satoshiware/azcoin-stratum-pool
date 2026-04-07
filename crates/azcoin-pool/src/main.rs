@@ -10,6 +10,7 @@ use pool_core::BlockSubmitter;
 use protocol_sv1::{run_stratum_listener, SessionEventHandler};
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 use azcoin_pool::composition::build_pool_services;
@@ -67,13 +68,57 @@ async fn main() -> Result<()> {
         payout_script_pubkey,
     });
 
+    // Broadcast channel for pushing new jobs to all connected SV1 sessions
+    let (job_tx, _) = broadcast::channel::<pool_core::Job>(16);
+
+    // Job poller: detect template changes and broadcast to sessions
+    {
+        let poller_source = Arc::clone(&pool_services.job_source);
+        let poller_tx = job_tx.clone();
+        tokio::spawn(async move {
+            let mut last_job_id = String::new();
+            let mut last_height: u64 = 0;
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                let job = match poller_source.current_job().await {
+                    Some(j) => j,
+                    None => continue,
+                };
+                let height = job
+                    .block_assembly
+                    .as_ref()
+                    .map(|b| b.height)
+                    .unwrap_or(0);
+                if job.job_id != last_job_id || height != last_height {
+                    info!(
+                        job_id = %job.job_id,
+                        height,
+                        prev_job_id = %last_job_id,
+                        prev_height = last_height,
+                        "new job detected, broadcasting to sessions"
+                    );
+                    last_job_id = job.job_id.clone();
+                    last_height = height;
+                    let _ = poller_tx.send(job);
+                }
+            }
+        });
+    }
+
     // Start SV1 listener in background
     let stratum_bind = config.stratum.bind.clone();
     let stratum_port = config.stratum.port;
     let initial_difficulty = config.pool.initial_difficulty;
     tokio::spawn(async move {
-        if let Err(e) =
-            run_stratum_listener(&stratum_bind, stratum_port, sv1_handler, initial_difficulty).await
+        if let Err(e) = run_stratum_listener(
+            &stratum_bind,
+            stratum_port,
+            sv1_handler,
+            initial_difficulty,
+            job_tx,
+        )
+        .await
         {
             tracing::error!(error = %e, "Stratum listener failed");
         }

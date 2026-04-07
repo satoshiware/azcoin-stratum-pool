@@ -16,4 +16,6 @@ pub struct SessionState {
     pub extranonce2_size: u32,
     /// Negotiated version rolling settings from mining.configure.
     pub version_rolling: Option<Sv1VersionRollingConfig>,
+    /// Last job_id sent via mining.notify, used to deduplicate push notifies.
+    pub last_notify_job_id: Option<String>,
 }

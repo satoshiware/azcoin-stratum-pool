@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 const DEFAULT_INITIAL_DIFFICULTY: u32 = 1;
@@ -54,16 +55,17 @@ impl SessionEventHandler for () {
     }
 }
 
-/// Start the SV1 TCP listener.
+/// Start the SV1 TCP listener with a job broadcast channel for server-push notifies.
 pub async fn run_stratum_listener(
     bind: &str,
     port: u16,
     handler: Arc<dyn SessionEventHandler>,
     initial_difficulty: u32,
+    job_tx: broadcast::Sender<Job>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = format!("{}:{}", bind, port);
     let listener = TcpListener::bind(&addr).await?;
-    run_stratum_listener_accept_with_difficulty(listener, handler, initial_difficulty).await
+    run_listener_inner(listener, handler, initial_difficulty, job_tx).await
 }
 
 /// Run SV1 listener on an already-bound TcpListener. For tests with ephemeral ports.
@@ -71,7 +73,8 @@ pub async fn run_stratum_listener_accept(
     listener: TcpListener,
     handler: Arc<dyn SessionEventHandler>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    run_stratum_listener_accept_with_difficulty(listener, handler, DEFAULT_INITIAL_DIFFICULTY).await
+    let (job_tx, _) = broadcast::channel(1);
+    run_listener_inner(listener, handler, DEFAULT_INITIAL_DIFFICULTY, job_tx).await
 }
 
 /// Run SV1 listener on an already-bound TcpListener with an explicit static difficulty.
@@ -79,6 +82,16 @@ pub async fn run_stratum_listener_accept_with_difficulty(
     listener: TcpListener,
     handler: Arc<dyn SessionEventHandler>,
     initial_difficulty: u32,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let (job_tx, _) = broadcast::channel(1);
+    run_listener_inner(listener, handler, initial_difficulty, job_tx).await
+}
+
+async fn run_listener_inner(
+    listener: TcpListener,
+    handler: Arc<dyn SessionEventHandler>,
+    initial_difficulty: u32,
+    job_tx: broadcast::Sender<Job>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = listener.local_addr()?;
     info!(addr = %addr, "Stratum V1 listener started");
@@ -90,19 +103,22 @@ pub async fn run_stratum_listener_accept_with_difficulty(
         handler.on_connect(peer_addr);
 
         let handler_clone = Arc::clone(&handler);
+        let job_rx = job_tx.subscribe();
         tokio::spawn(async move {
-            handle_sv1_session(stream, Arc::clone(&handler_clone), initial_difficulty).await;
+            handle_sv1_session(stream, Arc::clone(&handler_clone), initial_difficulty, job_rx)
+                .await;
             info!(peer = %peer_addr, "Stratum session disconnected");
             handler_clone.on_disconnect(peer_addr);
         });
     }
 }
 
-/// Handle a single Stratum session.
+/// Handle a single Stratum session with server-push job support via tokio::select!.
 async fn handle_sv1_session(
     stream: TcpStream,
     handler: Arc<dyn SessionEventHandler>,
     initial_difficulty: u32,
+    mut job_rx: broadcast::Receiver<Job>,
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -110,107 +126,149 @@ async fn handle_sv1_session(
     let mut session_state = SessionState::default();
 
     loop {
-        let n = match reader.read_line(&mut line).await {
-            Ok(n) => n,
-            Err(e) => {
-                warn!(error = %e, "SV1 read error");
-                break;
-            }
-        };
-        if n == 0 {
-            info!("SV1 session closed by peer");
-            break;
-        }
-        let trimmed = line.trim().to_string();
-        line.clear();
+        tokio::select! {
+            result = reader.read_line(&mut line) => {
+                let n = match result {
+                    Ok(n) => n,
+                    Err(e) => {
+                        warn!(error = %e, "SV1 read error");
+                        break;
+                    }
+                };
+                if n == 0 {
+                    info!("SV1 session closed by peer");
+                    break;
+                }
+                let trimmed = line.trim().to_string();
+                line.clear();
 
-        if trimmed.is_empty() {
-            continue;
-        }
+                if trimmed.is_empty() {
+                    continue;
+                }
 
-        let req: Sv1Request = match serde_json::from_str(&trimmed) {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(line = %trimmed, error = %e, "invalid SV1 JSON");
-                let response = session::build_error_response(None, -32700, "Parse error");
-                let response_json = match serde_json::to_string(&response) {
-                    Ok(json) => json,
-                    Err(serialize_error) => {
-                        warn!(error = %serialize_error, "failed to serialize SV1 parse error response");
+                let req: Sv1Request = match serde_json::from_str(&trimmed) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(line = %trimmed, error = %e, "invalid SV1 JSON");
+                        let response = session::build_error_response(None, -32700, "Parse error");
+                        let response_json = match serde_json::to_string(&response) {
+                            Ok(json) => json,
+                            Err(serialize_error) => {
+                                warn!(error = %serialize_error, "failed to serialize SV1 parse error response");
+                                continue;
+                            }
+                        };
+                        if let Err(write_error) = write_json_line(&mut writer, &response_json).await {
+                            warn!(error = %write_error, "failed to write SV1 parse error response");
+                            break;
+                        }
                         continue;
                     }
                 };
-                if let Err(write_error) = write_json_line(&mut writer, &response_json).await {
-                    warn!(error = %write_error, "failed to write SV1 parse error response");
+
+                let (notify_job, response) = dispatch_request(&req, &*handler, &mut session_state).await;
+                let response_json = match serde_json::to_string(&response) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        warn!(method = %req.method, error = %e, "failed to serialize SV1 response");
+                        continue;
+                    }
+                };
+                let is_configure = req.method == "mining.configure";
+
+                if is_configure {
+                    info!(id = ?req.id, body = %response_json, "SV1 configure response");
+                }
+                match write_json_line(&mut writer, &response_json).await {
+                    Ok(()) => {
+                        if is_configure {
+                            info!("SV1 configure response write succeeded");
+                        }
+                    }
+                    Err(e) => {
+                        warn!(method = %req.method, error = %e, "failed to write SV1 response");
+                        break;
+                    }
+                }
+
+                if let Some(job) = notify_job {
+                    if !send_job_notify(&mut writer, &job, initial_difficulty).await {
+                        break;
+                    }
+                    session_state.last_notify_job_id = Some(job.job_id.clone());
+                    handler.on_notify_sent(job).await;
+                }
+
+                if is_configure {
+                    info!("SV1 session waiting for next message after configure");
+                }
+            }
+            result = job_rx.recv() => {
+                let job = match result {
+                    Ok(job) => job,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "SV1 session lagged on job broadcast");
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        info!("Job broadcast channel closed, ending session");
+                        break;
+                    }
+                };
+                if session_state.authorized_worker.is_none() {
+                    continue;
+                }
+                if session_state.last_notify_job_id.as_deref() == Some(job.job_id.as_str()) {
+                    continue;
+                }
+                info!(
+                    job_id = %job.job_id,
+                    clean_jobs = job.clean_jobs,
+                    "pushing mining.notify to session"
+                );
+                if !send_job_notify(&mut writer, &job, initial_difficulty).await {
                     break;
                 }
-                continue;
+                session_state.last_notify_job_id = Some(job.job_id.clone());
+                handler.on_notify_sent(job).await;
             }
-        };
-
-        let (notify_job, response) = dispatch_request(&req, &*handler, &mut session_state).await;
-        let response_json = match serde_json::to_string(&response) {
-            Ok(json) => json,
-            Err(e) => {
-                warn!(method = %req.method, error = %e, "failed to serialize SV1 response");
-                continue;
-            }
-        };
-        let is_configure = req.method == "mining.configure";
-
-        // Conventional order: response first, then set_difficulty (stub), then notify
-        if is_configure {
-            info!(id = ?req.id, body = %response_json, "SV1 configure response");
-        }
-        match write_json_line(&mut writer, &response_json).await {
-            Ok(()) => {
-                if is_configure {
-                    info!("SV1 configure response write succeeded");
-                }
-            }
-            Err(e) => {
-                warn!(method = %req.method, error = %e, "failed to write SV1 response");
-                break;
-            }
-        }
-
-        if let Some(job) = notify_job {
-            // set_difficulty stub before notify
-            let set_diff = session::build_set_difficulty_notification(initial_difficulty);
-            match serde_json::to_string(&set_diff) {
-                Ok(json) => {
-                    if let Err(e) = write_json_line(&mut writer, &json).await {
-                        warn!(error = %e, "failed to write mining.set_difficulty");
-                        break;
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "failed to serialize mining.set_difficulty");
-                    continue;
-                }
-            }
-            // notify
-            let notify_msg = build_mining_notify(&job);
-            match serde_json::to_string(&notify_msg) {
-                Ok(json) => {
-                    if let Err(e) = write_json_line(&mut writer, &json).await {
-                        warn!(error = %e, "failed to write mining.notify");
-                        break;
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "failed to serialize mining.notify");
-                    continue;
-                }
-            }
-            // Register job when notify is actually sent
-            handler.on_notify_sent(job).await;
-        }
-
-        if is_configure {
-            info!("SV1 session waiting for next message after configure");
         }
     }
+}
+
+/// Send mining.set_difficulty + mining.notify for a job. Returns true if session is alive.
+async fn send_job_notify(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    job: &Job,
+    initial_difficulty: u32,
+) -> bool {
+    let set_diff = session::build_set_difficulty_notification(initial_difficulty);
+    let set_diff_json = match serde_json::to_string(&set_diff) {
+        Ok(json) => json,
+        Err(e) => {
+            warn!(error = %e, "failed to serialize mining.set_difficulty");
+            return false;
+        }
+    };
+    if let Err(e) = write_json_line(writer, &set_diff_json).await {
+        warn!(error = %e, "failed to write mining.set_difficulty");
+        return false;
+    }
+
+    let notify_msg = build_mining_notify(job);
+    let notify_json = match serde_json::to_string(&notify_msg) {
+        Ok(json) => json,
+        Err(e) => {
+            warn!(error = %e, "failed to serialize mining.notify");
+            return false;
+        }
+    };
+    if let Err(e) = write_json_line(writer, &notify_json).await {
+        warn!(error = %e, "failed to write mining.notify");
+        return false;
+    }
+
+    true
 }
 
 async fn write_json_line(
